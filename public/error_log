@@ -1,0 +1,7 @@
+[08-Feb-2026 14:40:57 UTC] PHP Fatal error:  Uncaught RuntimeException: Composer detected issues in your platform: Your Composer dependencies require a PHP version ">= 8.2.0". You are running 7.4.33. in /home/doofazit/mis.doofazit.com/vendor/composer/platform_check.php:26
+Stack trace:
+#0 /home/doofazit/mis.doofazit.com/vendor/composer/autoload_real.php(25): require()
+#1 /home/doofazit/mis.doofazit.com/vendor/autoload.php(22): ComposerAutoloaderInit04baa661c0f7ae5c9d6dd97e2acdfc3d::getLoader()
+#2 /home/doofazit/mis.doofazit.com/public/index.php(14): require('/home/doofazit/...')
+#3 {main}
+  thrown in /home/doofazit/mis.doofazit.com/vendor/composer/platform_check.php on line 26

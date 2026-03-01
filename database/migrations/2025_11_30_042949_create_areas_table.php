@@ -1,0 +1,30 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    /**
+     * Run the migrations.
+     */
+    public function up(): void
+    {
+        Schema::create('areas', function (Blueprint $table) {
+            $table->id();
+            $table->string('country_name'); // store country name directly
+            $table->string('area_name')->unique();
+            $table->enum('status', ['Running', 'Disabled'])->default('Running');
+            $table->timestamps();
+        });
+    }
+
+    /**
+     * Reverse the migrations.
+     */
+    public function down(): void
+    {
+        Schema::dropIfExists('areas');
+    }
+};
