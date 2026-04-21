@@ -62,6 +62,7 @@ Route::middleware(['auth', 'admin'])->group(function () {
     // Lists (read-only)
     Route::get('/employeeList', fn() => Inertia::render('Backend/EmployeeList'))->name('employeeList');
     Route::get('/staffList', fn() => Inertia::render('Backend/StaffList'))->name('staffList');
+    Route::get('/demoPresenterList', fn() => Inertia::render('Backend/DemoPresenterList'))->name('demoPresenterList');
     Route::get('/clientListSimple', fn() => Inertia::render('Backend/ClientListSimple'))->name('clientListSimple');
     Route::get('/areaList', fn() => Inertia::render('Backend/AreaList'))->name('areaList');
 });

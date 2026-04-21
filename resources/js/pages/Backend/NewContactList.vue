@@ -552,31 +552,6 @@ const getStaffName = (staffId: number | null, fallback = 'Staff') => {
         <div class="p-6 bg-gray-50 min-h-screen">
             <Toast />
 
-            <div class="">
-                <!-- ASSIGNMENT CARD -->
-                <Card>
-                    <template #title>
-                        <h2 class="text-xl font-semibold">Assign Customers to Staff</h2>
-                    </template>
-
-                    <template #content>
-                        <div class="flex flex-col md:flex-row gap-4 items-center bg-gray-50 p-6 rounded-xl">
-                            <div class="w-full md:w-1/3">
-                                <label class="font-semibold block mb-2 text-gray-700">Select Staff</label>
-                                <Multiselect v-model="bulkStaff" :options="staffList" label="name" track-by="id"
-                                    placeholder="Assign selected to staff" class="w-64" />
-                            </div>
-
-                            <!-- ASSIGN BUTTON -->
-                            <div class="mt-6 md:mt-8">
-                                <Button label="Assign Selected" icon="pi pi-user-plus" class="p-button-success px-6"
-                                    :loading="loading" @click="assignBulkCustomers" :disabled="assigning" />
-                            </div>
-                        </div>
-                    </template>
-                </Card>
-            </div>
-
             <div class="my-6 border-l-4 border-blue-600 pl-5">
                 <h1 class="text-3xl font-extrabold text-gray-900 leading-tight">
                     New Contacts Report
@@ -589,46 +564,103 @@ const getStaffName = (staffId: number | null, fallback = 'Staff') => {
 
             <!-- Search Option Inputs -->
             <div class="bg-white rounded-xl shadow-md p-5 mb-6 border border-gray-100">
-                <div class="flex flex-wrap gap-6 items-end">
+                <div class="grid grid-cols-1 xl:grid-cols-12 gap-6 items-end">
 
-                    <!-- Created By Filter -->
-                    <div class="flex flex-col w-full md:w-64">
-                        <label class="text-sm font-semibold text-gray-600 mb-1">
-                            <i class="pi pi-user mr-1 text-blue-500"></i>
-                            Created By
-                        </label>
-                        <Multiselect v-model="filterCreatedBy" :options="formattedUsers" label="label" track-by="value"
-                            placeholder="Select staff" class="rounded-lg" />
+                    <!-- ✅ LEFT: Assign Selected -->
+                    <div class="xl:col-span-6">
+                        <div class="bg-gray-50 p-4 rounded-xl border border-gray-200">
+                            <div class="flex items-center justify-between gap-3 flex-wrap">
+                                <div>
+                                    <h3 class="text-sm font-semibold text-gray-800">Assign Selected Customers</h3>
+                                    <p class="text-xs text-gray-500 mt-0.5">
+                                        Selected: <span class="font-semibold text-gray-800">{{ selectedCustomers.length }}</span>
+                                    </p>
+                                </div>
+
+                                <Button
+                                    label="Assign Selected"
+                                    icon="pi pi-user-plus"
+                                    class="p-button-success px-6"
+                                    :loading="assigning"
+                                    :disabled="assigning || !selectedCustomers.length || !bulkStaff"
+                                    @click="assignBulkCustomers"
+                                />
+                            </div>
+
+                            <div class="mt-3">
+                                <label class="text-sm font-semibold text-gray-600 mb-1 block">
+                                    <i class="pi pi-user mr-1 text-green-600"></i>
+                                    Select Staff
+                                </label>
+                                <Multiselect
+                                    v-model="bulkStaff"
+                                    :options="staffList"
+                                    label="name"
+                                    track-by="id"
+                                    placeholder="Assign selected to staff"
+                                    class="w-full"
+                                />
+                            </div>
+                        </div>
                     </div>
 
-                    <!-- Created Date Filter (PrimeVue Calendar) -->
-                    <div class="flex flex-col w-full md:w-64">
-                        <label class="text-sm font-semibold text-gray-600 mb-1">
-                            <i class="pi pi-calendar mr-1 text-purple-500"></i>
-                            Created Date
-                        </label>
+                    <!-- ✅ RIGHT: Filters -->
+                    <div class="xl:col-span-6">
+                        <div class="flex flex-wrap gap-3 items-end justify-start">
+                            <!-- Created By Filter -->
+                            <div class="flex flex-col w-full md:w-66">
+                                <label class="text-sm font-semibold text-gray-600 mb-1">
+                                    <i class="pi pi-user mr-1 text-blue-500"></i>
+                                    Created By
+                                </label>
+                                <Multiselect
+                                    v-model="filterCreatedBy"
+                                    :options="formattedUsers"
+                                    label="label"
+                                    track-by="value"
+                                    placeholder="Select staff"
+                                    class="rounded-lg"
+                                />
+                            </div>
 
-                        <Calendar v-model="filterCreatedDate" dateFormat="yy-mm-dd" showIcon showButtonBar
-                            class="w-full" placeholder="Pick a date" />
+                            <!-- Created Date Filter (PrimeVue Calendar) -->
+                            <div class="flex flex-col w-full md:w-58">
+                                <label class="text-sm font-semibold text-gray-600 mb-1">
+                                    <i class="pi pi-calendar mr-1 text-purple-500"></i>
+                                    Created Date
+                                </label>
+
+                                <Calendar
+                                    v-model="filterCreatedDate"
+                                    dateFormat="yy-mm-dd"
+                                    showIcon
+                                    showButtonBar
+                                    class="w-full"
+                                    placeholder="Pick a date"
+                                />
+                            </div>
+
+                            <!-- Clear Button -->
+                            <div class="flex items-end justify-end w-full md:w-auto">
+                                <button
+                                    @click="filterCreatedBy = null; filterCreatedDate = null"
+                                    class="
+                                        h-[42px]
+                                        px-6
+                                        rounded-lg
+                                        bg-gradient-to-r from-gray-200 to-gray-300
+                                        text-gray-700 font-medium
+                                        hover:from-gray-300 hover:to-gray-400
+                                        transition
+                                        flex items-center gap-2
+                                    "
+                                >
+                                    <i class="pi pi-filter-slash"></i>
+                                    Clear Filters
+                                </button>
+                            </div>
+                        </div>
                     </div>
-
-                    <!-- Clear Button -->
-                    <div class="flex items-end">
-                        <button @click="filterCreatedBy = null; filterCreatedDate = null" class="
-                        h-[42px]
-                        px-6
-                        rounded-lg
-                        bg-gradient-to-r from-gray-200 to-gray-300
-                        text-gray-700 font-medium
-                        hover:from-gray-300 hover:to-gray-400
-                        transition
-                        flex items-center gap-2
-                    ">
-                            <i class="pi pi-filter-slash"></i>
-                            Clear Filters
-                        </button>
-                    </div>
-
                 </div>
             </div>
 

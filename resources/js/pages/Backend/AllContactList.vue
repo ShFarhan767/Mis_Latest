@@ -18,6 +18,12 @@ const searchQuery = ref('');
 const isSearching = computed(() => searchQuery.value.trim().length > 0);
 const filterCreatedBy = ref<any | null>(null);
 const filterCreatedDate = ref<Date | null>(null);
+const filterCreatedMonth = ref<Date | null>(null);
+
+// Admin-only: tab-specific filters
+const filterAssignedUser = ref<any | null>(null);
+const filterDemoPresenter = ref<any | null>(null);
+const demoAssignedAtMap = ref<Record<number, string | null>>({});
 
 // Modal states
 const showModal = ref(false);
@@ -231,6 +237,7 @@ const fetchNewCustomers = async () => {
             }));
 
         customers.value = list;
+        void hydrateDemoAssignedTimes(list);
     } catch {
         toast.add({
             severity: "error",
@@ -239,6 +246,42 @@ const fetchNewCustomers = async () => {
             life: 3000,
         });
     }
+};
+
+const hydrateDemoAssignedTimes = async (list: any[]) => {
+    const demoRows = list.filter((customer: any) =>
+        customer.staff_status === "Need To Show Demo" || customer.staff_status === "Demo Done"
+    );
+
+    if (!demoRows.length) {
+        demoAssignedAtMap.value = {};
+        return;
+    }
+
+    const results = await Promise.allSettled(
+        demoRows.map(async (customer: any) => {
+            const { data } = await axios.get(`/api/customers/${customer.id}/history`);
+            const historyList = Array.isArray(data) ? data : [];
+            const assignedEntry = historyList.find(
+                (item: any) =>
+                    item?.old_data &&
+                    Object.prototype.hasOwnProperty.call(item.old_data, "demo_presenter_id")
+            );
+
+            return {
+                id: customer.id,
+                assignedAt: assignedEntry?.created_at ?? null,
+            };
+        })
+    );
+
+    const assignedMap: Record<number, string | null> = {};
+    results.forEach((result) => {
+        if (result.status !== "fulfilled") return;
+        assignedMap[result.value.id] = result.value.assignedAt;
+    });
+
+    demoAssignedAtMap.value = assignedMap;
 };
 
 // Assign staff modal
@@ -572,6 +615,19 @@ const updateStaffStatus = async (customerId: number, status: string, demoPresent
 
 const activeTab = ref<string>("All Customer");
 
+const showAssignedUserFilter = computed(() =>
+    currentUser.value?.role === 'admin'
+);
+
+const showDemoPresenterFilter = computed(() =>
+    currentUser.value?.role === 'admin' &&
+    (activeTab.value === 'Need To Show Demo' || activeTab.value === 'Demo Done')
+);
+
+watch(activeTab, (tab) => {
+    if (tab !== 'Need To Show Demo' && tab !== 'Demo Done') filterDemoPresenter.value = null;
+});
+
 const statusTabs = computed(() => {
     const commonTabs = [
         "All Customer",
@@ -667,6 +723,12 @@ const statusCount = (status: string) => {
     return baseList.filter(c => c.staff_status === status).length;
 };
 
+const intOrNull = (value: any) => {
+    if (value === null || value === undefined || value === '') return null;
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+};
+
 const filteredCustomers = computed(() => {
     let list = customers.value;
 
@@ -707,7 +769,10 @@ const filteredCustomers = computed(() => {
         const q = searchQuery.value.toLowerCase();
         list = list.filter(c =>
             c.name?.toLowerCase().includes(q) ||
-            c.numbers?.toLowerCase().includes(q)
+            c.numbers?.toLowerCase().includes(q) ||
+            c.assigned_staff?.name?.toLowerCase().includes(q) ||
+            c.assigned_users?.some((staff: any) => staff?.name?.toLowerCase().includes(q)) ||
+            c.demo_presenter?.name?.toLowerCase().includes(q)
         );
     }
 
@@ -726,6 +791,18 @@ const filteredCustomers = computed(() => {
                 created.getFullYear() === selected.getFullYear() &&
                 created.getMonth() === selected.getMonth() &&
                 created.getDate() === selected.getDate()
+            );
+        });
+    }
+
+    if (filterCreatedMonth.value) {
+        const selectedMonth = new Date(filterCreatedMonth.value);
+        list = list.filter(c => {
+            if (!c.created_at) return false;
+            const created = new Date(c.created_at);
+            return (
+                created.getFullYear() === selectedMonth.getFullYear() &&
+                created.getMonth() === selectedMonth.getMonth()
             );
         });
     }
@@ -749,12 +826,32 @@ const filteredCustomers = computed(() => {
         list = list.filter(c => c.staff_status === activeTab.value);
     }
 
+    // --- Admin: tab-specific filters ---
+    if (currentUser.value?.role === 'admin' && filterAssignedUser.value) {
+        list = list.filter(c => (intOrNull(c.assigned_staff_id) === intOrNull(filterAssignedUser.value?.id)));
+    }
+
+    if (
+        currentUser.value?.role === 'admin' &&
+        (activeTab.value === 'Need To Show Demo' || activeTab.value === 'Demo Done') &&
+        filterDemoPresenter.value
+    ) {
+        list = list.filter(c => (intOrNull(c.demo_presenter_id) === intOrNull(filterDemoPresenter.value?.id)));
+    }
+
     return list;
 });
 
 const showFilteredCount = computed(() => {
     // Show badge only if any filter is applied or search query exists
-    return searchQuery.value.trim() || filterCreatedBy.value || filterCreatedDate.value;
+    return (
+        searchQuery.value.trim() ||
+        filterCreatedBy.value ||
+        filterCreatedDate.value ||
+        filterCreatedMonth.value ||
+        filterAssignedUser.value ||
+        filterDemoPresenter.value
+    );
 });
 
 const filteredCount = computed(() => filteredCustomers.value.length);
@@ -781,7 +878,10 @@ const searchResults = computed(() => {
 
     return customers.value.filter(c =>
         c.name?.toLowerCase().includes(q) ||
-        c.numbers?.toLowerCase().includes(q)
+        c.numbers?.toLowerCase().includes(q) ||
+        c.assigned_staff?.name?.toLowerCase().includes(q) ||
+        c.assigned_users?.some((staff: any) => staff?.name?.toLowerCase().includes(q)) ||
+        c.demo_presenter?.name?.toLowerCase().includes(q)
     );
 });
 
@@ -878,6 +978,8 @@ const formatDateTime = (dateStr: string) => {
         hour12: true          // PM
     });
 };
+
+const getDemoAssignedAt = (customerId: number) => demoAssignedAtMap.value[customerId] ?? null;
 </script>
 
 <template>
@@ -934,20 +1036,58 @@ const formatDateTime = (dateStr: string) => {
 
             <!-- Search Option Inputs -->
             <div class="bg-white rounded-xl shadow-md p-5 mb-6 border border-gray-100">
-                <div class="flex flex-wrap gap-6 items-end">
+                <div class="flex flex-wrap gap-3 items-end">
 
                     <!-- Created By Filter -->
-                    <div class="flex flex-col w-full md:w-70" v-if="currentUser?.role === 'admin'">
+                    <!-- <div class="flex flex-col w-full md:w-70" v-if="currentUser?.role === 'admin'">
                         <label class="text-sm font-semibold text-gray-600 mb-1">
                             <i class="pi pi-user mr-1 text-blue-500"></i>
                             Created By
                         </label>
                         <Multiselect v-model="filterCreatedBy" :options="formattedUsers" label="label" track-by="value"
                             placeholder="Select staff" class="rounded-lg" />
+                    </div> -->
+
+                    <!-- Assigned User Filter (Admin: All Assign tab) -->
+                    <div class="flex flex-col w-full md:w-62" v-if="showAssignedUserFilter">
+                        <label class="text-sm font-semibold text-gray-600 mb-1">
+                            <i class="pi pi-users mr-1 text-indigo-500"></i>
+                            Assigned User
+                        </label>
+                        <Multiselect
+                            v-model="filterAssignedUser"
+                            :options="users"
+                            label="name"
+                            track-by="id"
+                            placeholder="Select assigned staff"
+                            :searchable="true"
+                            :close-on-select="true"
+                            :allow-empty="true"
+                            class="rounded-lg"
+                        />
+                    </div>
+
+                    <!-- Demo Presenter Filter (Admin: Need To Show Demo + Demo Done tabs) -->
+                    <div class="flex flex-col w-full md:w-62" v-if="showDemoPresenterFilter">
+                        <label class="text-sm font-semibold text-gray-600 mb-1">
+                            <i class="pi pi-user-edit mr-1 text-purple-600"></i>
+                            Demo Presenter
+                        </label>
+                        <Multiselect
+                            v-model="filterDemoPresenter"
+                            :options="demoPresenters"
+                            label="name"
+                            track-by="id"
+                            placeholder="Select demo presenter"
+                            :searchable="true"
+                            :close-on-select="true"
+                            :allow-empty="true"
+                            class="rounded-lg"
+                        />
                     </div>
 
                     <!-- Created Date Filter (PrimeVue Calendar) -->
-                    <div class="flex flex-col w-full md:w-64">
+                    <div class="flex flex-col w-full md:w-50">
                         <label class="text-sm font-semibold text-gray-600 mb-1">
                             <i class="pi pi-calendar mr-1 text-purple-500"></i>
                             Created Date
@@ -957,9 +1097,25 @@ const formatDateTime = (dateStr: string) => {
                             class="w-full" placeholder="Pick a date" />
                     </div>
 
+                    <div class="flex flex-col w-full md:w-40">
+                        <label class="text-sm font-semibold text-gray-600 mb-1">
+                            <i class="pi pi-calendar-clock mr-1 text-indigo-500"></i>
+                            Created Month
+                        </label>
+                        <Calendar
+                            v-model="filterCreatedMonth"
+                            view="month"
+                            dateFormat="mm/yy"
+                            showIcon
+                            showButtonBar
+                            class="w-full"
+                            placeholder="Pick month"
+                        />
+                    </div>
+
                     <!-- Clear Button -->
                     <div class="flex items-end">
-                        <button @click="filterCreatedBy = null; filterCreatedDate = null" class="
+                        <button @click="filterCreatedBy = null; filterCreatedDate = null; filterCreatedMonth = null; filterAssignedUser = null; filterDemoPresenter = null" class="
                         h-[42px]
                         px-6
                         rounded-lg
@@ -1061,6 +1217,18 @@ const formatDateTime = (dateStr: string) => {
                                 class="text-xs text-purple-600">
                                 Demo Presenter:
                                 {{ getDemoPresenterName(row) }}
+                            </span>
+
+                            <span v-if="row.staff_status === 'Need To Show Demo' && getDemoAssignedAt(row.id)"
+                                class="text-xs text-amber-600">
+                                Demo Assigned:
+                                {{ formatDateTime(getDemoAssignedAt(row.id)!) }}
+                            </span>
+
+                            <span v-if="row.staff_status === 'Demo Done' && row.demo_done_at"
+                                class="text-xs text-emerald-600">
+                                Demo Done:
+                                {{ formatDateTime(row.demo_done_at) }}
                             </span>
                         </div>
                     </template>

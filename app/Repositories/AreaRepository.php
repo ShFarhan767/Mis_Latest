@@ -8,13 +8,6 @@ class AreaRepository
 {
     public function all()
     {
-        $user = auth()->user();
-
-        if ($user->role === 'staff') {
-            // staff see only their own
-            return Area::where('created_by', $user->id)->orderBy('id', 'DESC')->get();
-        }
-
         // admin see all
         return Area::orderBy('id', 'DESC')->get();
     }

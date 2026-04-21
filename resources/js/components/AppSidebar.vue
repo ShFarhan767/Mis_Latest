@@ -101,6 +101,7 @@ const sidebarItems = [
                 children: [
                     { title: "Desk Staff List", href: "/employeeList", icon: SlidersHorizontal, roles: ['admin'] },
                     { title: "Sales Staff List", href: "/staffList", icon: SlidersHorizontal, roles: ['admin'] },
+                    { title: "Demo Presenter List", href: "/demoPresenterList", icon: SlidersHorizontal, roles: ['admin'] },
                     { title: "Client List (Simple)", href: "/clientListSimple", icon: SlidersHorizontal, roles: ['admin'] },
                     { title: "Area List", href: "/areaList", icon: SlidersHorizontal, roles: ['admin'] },
                 ],

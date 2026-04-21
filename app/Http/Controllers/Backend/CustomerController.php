@@ -196,6 +196,9 @@ class CustomerController extends Controller
         $customer = $this->service->repo->find($id);
 
         // Check permission
+        if (auth()->user()->role === 'demo_presenter') {
+            return response()->json(['message' => 'Forbidden'], 403);
+        }
         if (auth()->user()->role === 'staff' && $customer->assigned_staff_id !== auth()->id()) {
             return response()->json(['message' => 'Forbidden'], 403);
         }
@@ -249,18 +252,28 @@ class CustomerController extends Controller
 
         $customer = $this->service->repo->find($id);
 
-        if ($customer->staff_status !== 'Need To Show Demo') {
-            return response()->json([
-                'message' => 'Demo status can be updated only when staff status is Need To Show Demo.'
-            ], 422);
-        }
-
         $user = auth()->user();
         if ($user->role === 'staff' && (int)$customer->assigned_staff_id !== (int)$user->id) {
             return response()->json(['message' => 'Forbidden'], 403);
         }
         if ($user->role === 'demo_presenter' && (int)$customer->demo_presenter_id !== (int)$user->id) {
             return response()->json(['message' => 'Forbidden'], 403);
+        }
+
+        // Lock demo presenter changes once marked Done (even if staff_status gets changed later)
+        if (
+            $user->role === 'demo_presenter'
+            && (($customer->demo_status ?? null) === 'Done' || !empty($customer->demo_done_at))
+        ) {
+            return response()->json([
+                'message' => 'Demo status is locked once marked Done.'
+            ], 422);
+        }
+
+        if ($customer->staff_status !== 'Need To Show Demo') {
+            return response()->json([
+                'message' => 'Demo status can be updated only when staff status is Need To Show Demo.'
+            ], 422);
         }
 
         if ($data['demo_status'] === 'Done' && empty(trim($data['note'] ?? ''))) {
