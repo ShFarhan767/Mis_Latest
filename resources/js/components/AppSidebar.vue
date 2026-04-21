@@ -17,6 +17,7 @@ import {
 import {
     LayoutGrid,
     SlidersHorizontal,
+    ImageUpscale,
     UsersRound,
     ChevronDown,
     MapPinCheckInside,
@@ -44,6 +45,7 @@ const sidebarItems = [
             // Only admin
             { title: "Desk Staff Create", href: "/employeeCreate", icon: Computer, roles: ['admin'] },
             { title: "Sales Staff Create", href: "/staffCreate", icon: UserRoundCog, roles: ['admin'] },
+            { title: "Demo Presenter Create", href: "/presenterCreate", icon: ContactRound, roles: ['admin'] },
             { title: "Area Create", href: "/areaCreate", icon: MapPinCheckInside, roles: ['admin'] },
             {
                 title: "Client Management",
@@ -83,12 +85,33 @@ const sidebarItems = [
                 children: [
                     { title: "New Contacts", href: "/new-contacts/list", icon: SlidersHorizontal, roles: ['admin'] },
                     { title: "Cancel Contact List", href: "/cancel-contacts/list", icon: SlidersHorizontal, roles: ['admin'] },
-                    { title: "All Contact Lists", href: "/all-contacts/list", icon: SlidersHorizontal, roles: ['admin', 'staff'] },
+                    { title: "All Contact Lists", href: "/all-contacts/list", icon: SlidersHorizontal, roles: ['admin', 'staff', 'demo_presenter'] },
                     { title: "Numbers History", href: "/numbers-histories/list", icon: SlidersHorizontal, roles: ['admin'] },
                 ],
             },
         ],
-
+    },
+    {
+        section: "Reports Management",
+        items: [
+            {
+                title: "Report Details",
+                icon: ContactRound,
+                roles: ['admin'],
+                children: [
+                    { title: "Desk Staff List", href: "/employeeList", icon: SlidersHorizontal, roles: ['admin'] },
+                    { title: "Sales Staff List", href: "/staffList", icon: SlidersHorizontal, roles: ['admin'] },
+                    { title: "Client List (Simple)", href: "/clientListSimple", icon: SlidersHorizontal, roles: ['admin'] },
+                    { title: "Area List", href: "/areaList", icon: SlidersHorizontal, roles: ['admin'] },
+                ],
+            },
+        ],
+    },
+    {
+        section: "Website Configuration",
+        items: [
+            { title: "Site Branding", href: "/logo-upload", icon: ImageUpscale, roles: ['admin'] },
+        ],
     },
 ];
 

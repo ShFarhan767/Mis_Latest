@@ -41,7 +41,7 @@ const submit = () => {
         <Head title="Profile settings" />
 
         <SettingsLayout>
-            <div class="flex flex-col space-y-6">
+            <div class="flex flex-col space-y-6 shadow-lg p-5 bg-gray-100 rounded-lg">
                 <HeadingSmall title="Profile information" description="Update your name, email, and mobile number" />
 
                 <form @submit.prevent="submit" class="space-y-6">
@@ -85,8 +85,6 @@ const submit = () => {
                     </div>
                 </form>
             </div>
-
-            <DeleteUser />
         </SettingsLayout>
     </AppLayout>
 </template>

@@ -23,7 +23,7 @@ class AdminOrStaffMiddleware
         }
 
         // Allow only admin & staff
-        if (!in_array(Auth::user()->role, ['admin', 'staff'])) {
+        if (!in_array(Auth::user()->role, ['admin', 'staff', 'demo_presenter'])) {
             return Inertia::render('Errors/Forbidden', [
                 'message' => 'You are not authorized to access this page.'
             ]);
@@ -34,5 +34,7 @@ class AdminOrStaffMiddleware
         });
 
         return $next($request);
+
+        
     }
 }

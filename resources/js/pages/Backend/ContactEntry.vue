@@ -29,9 +29,6 @@ const props = defineProps({
     userId: Number
 });
 
-console.log("Contact User Role:", props.userRole);
-console.log("Contact User ID:", props.userId);
-
 const toast = useToast();
 const showDesignationModal = ref(false);
 const showLeadSourceModal = ref(false);
@@ -281,10 +278,13 @@ const handleShopTypeCreated = (newType: any) => {
 };
 
 const handleLocationCreated = (newLoc: any) => {
-    const option = { label: newLoc.area_name, value: newLoc.area_name };
-    areas.value.push(option);
-    customer.value.location = option; // select newly created location automatically
-};
+    const option = {
+        label: newLoc.area_name,
+        value: newLoc.area_name
+    }
+    areas.value.push(option) // add to dropdown
+    customer.value.location = option // auto select
+}
 
 const handleDesignationCreated = (newData: any) => {
     const option = { label: newData.designation_name, value: newData.id };
@@ -484,6 +484,8 @@ watch(selectedCountry, (newCountry) => {
     if (!areas.value.find(a => a.value === customer.value.location?.value)) {
         customer.value.location = null;
     }
+
+    fetchAreas();
 });
 
 // Lead Source Options
@@ -1578,6 +1580,7 @@ const formatHistoryValue = (key: string, value: any) => {
                                     <Button v-if="props.userRole === 'admin'" icon="pi pi-plus"
                                         class="p-button-rounded p-button-sm p-button-success"
                                         @click="showDesignationModal = true" />
+
                                 </div>
 
                                 <Multiselect v-model="customer.designation" :options="designations"
@@ -1768,7 +1771,7 @@ const formatHistoryValue = (key: string, value: any) => {
                             <div>
                                 <div class="flex justify-between items-center mb-1">
                                     <label class="font-medium">Location <span class="text-red-600">*</span></label>
-                                    <Button v-if="props.userRole === 'admin'" icon="pi pi-plus"
+                                    <Button icon="pi pi-plus"
                                         class="p-button-rounded p-button-sm p-button-success"
                                         @click="showLocationModal = true" />
                                 </div>

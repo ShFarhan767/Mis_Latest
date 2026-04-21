@@ -19,6 +19,9 @@ class Task extends Model
         'start_date',
         'image_path',
         'reissue_comment',
+        'decline_note',
+        'approve_note',
+        'declined_trash_note',
         'complete_note', // ✅ added
         'cancelled_note', // ✅ added
         'approved_note', // ✅ added

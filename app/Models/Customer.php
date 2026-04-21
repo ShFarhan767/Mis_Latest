@@ -32,10 +32,14 @@ class Customer extends Model
         'created_by',
         // ✅ ADD THIS
         'assigned_staff_id',
+        'demo_presenter_id',
+        'demo_status',
+        'demo_done_at',
     ];
 
     protected $casts = [
         'service_type' => 'array',
+        'demo_done_at' => 'datetime',
     ];
 
     public function numbers()
@@ -81,6 +85,16 @@ class Customer extends Model
     public function assignedStaff()
     {
         return $this->belongsTo(User::class, 'assigned_staff_id');
+    }
+
+    public function demoPresenter()
+    {
+        return $this->belongsTo(User::class, 'demo_presenter_id');
+    }
+
+    public function demoNotes()
+    {
+        return $this->hasMany(CustomerDemoNote::class)->latest();
     }
 
     public function assignHistories()

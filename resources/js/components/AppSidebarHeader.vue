@@ -65,29 +65,26 @@ onBeforeUnmount(() => {
         </div>
 
         <!-- Right: Search + User -->
-        <div class="ml-auto flex items-center gap-2 relative">
+        <div class="ml-auto flex items-center gap-2 relative capitalize">
 
             <!-- 🔥 Search Component -->
-            <div v-if="userRole !== 'employee'" ref="wrapperRef" class="relative">
-                <!-- Expandable Input -->
+            <!-- <div v-if="userRole !== 'employee'" ref="wrapperRef" class="relative">
                 <transition name="fade">
                     <input v-if="isOpen" v-model="searchText" @input="emit('search', searchText)" type="text"
                         placeholder="Search clients..."
                         class="w-64 md:w-80 border rounded-full py-2 pl-10 pr-10 bg-white shadow-sm focus:outline-none" />
                 </transition>
 
-                <!-- Search Icon -->
                 <button @click="isOpen = true"
                     class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-600 hover:text-gray-800">
                     <Search class="w-5 h-5" />
                 </button>
 
-                <!-- Reset Button -->
                 <button v-if="searchText.length > 0" @click="resetSearch"
                     class="absolute right-70 top-1/2 -translate-y-1/2 text-gray-500 hover:text-black">
                     <X class="w-5 h-5" />
                 </button>
-            </div>
+            </div> -->
 
             <!-- User -->
             <NavUser />

@@ -506,6 +506,14 @@ const filteredCustomers = computed(() => {
     });
 });
 
+const formattedUsers = computed(() =>
+    users.value.map(u => ({
+        ...u,
+        label: u.mobile ? `${u.name} (${u.mobile})` : u.name, // Name + mobile
+        value: u.id
+    }))
+);
+
 const tableRows = computed(() =>
     filteredCustomers.value.map((c, index) => ({ sn: index + 1, ...c }))
 );
@@ -584,12 +592,12 @@ const getStaffName = (staffId: number | null, fallback = 'Staff') => {
                 <div class="flex flex-wrap gap-6 items-end">
 
                     <!-- Created By Filter -->
-                    <div class="flex flex-col w-full md:w-64" v-if="user?.role === 'admin'">
+                    <div class="flex flex-col w-full md:w-64">
                         <label class="text-sm font-semibold text-gray-600 mb-1">
                             <i class="pi pi-user mr-1 text-blue-500"></i>
                             Created By
                         </label>
-                        <Multiselect v-model="filterCreatedBy" :options="users" label="name" track-by="id"
+                        <Multiselect v-model="filterCreatedBy" :options="formattedUsers" label="label" track-by="value"
                             placeholder="Select staff" class="rounded-lg" />
                     </div>
 

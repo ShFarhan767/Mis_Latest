@@ -8,6 +8,14 @@ class AreaRepository
 {
     public function all()
     {
+        $user = auth()->user();
+
+        if ($user->role === 'staff') {
+            // staff see only their own
+            return Area::where('created_by', $user->id)->orderBy('id', 'DESC')->get();
+        }
+
+        // admin see all
         return Area::orderBy('id', 'DESC')->get();
     }
 
@@ -16,23 +24,31 @@ class AreaRepository
         return Area::findOrFail($id);
     }
 
-    public function store($data)
+    public function store($data, $userId)
     {
         return Area::create([
-            'area_name' => $data['area_name'],
-            'status' => $data['status'],
-            'country_name' => $data['country_name'], // <-- required link to country
+            'area_name'   => $data['area_name'],
+            'status'      => $data['status'],
+            'country_name'=> $data['country_name'],
+            'created_by'  => $userId, // ✅ now defined
         ]);
     }
 
     public function update($id, $data)
     {
         $area = Area::findOrFail($id);
+
+        // staff can only edit their own
+        if (auth()->user()->role === 'staff' && $area->created_by !== auth()->id()) {
+            abort(403, 'Unauthorized');
+        }
+
         $area->update([
             'area_name' => $data['area_name'],
             'status' => $data['status'],
-            'country_name' => $data['country_name'], // <-- update country link
+            'country_name' => $data['country_name'],
         ]);
+
         return $area;
     }
 

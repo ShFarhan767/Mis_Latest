@@ -11,7 +11,7 @@ interface Column {
 }
 
 const props = defineProps<{
-    title: string;
+    title?: string;
     columns: Column[];
     rows?: any[];
     onEdit?: (row: any) => void;
@@ -95,8 +95,12 @@ const filteredRows = computed(() => {
                                 <template v-else-if="col.key === 'actions'">
                                     <Button v-if="onEdit" icon="pi pi-pencil"
                                         class="p-button-rounded p-button-success mr-2" @click="onEdit(row)" />
-                                    <Button v-if="onDelete" icon="pi pi-trash" class="p-button-rounded p-button-danger"
-                                        @click="onDelete(row.id)" />
+                                    <Button
+                                        icon="pi pi-trash"
+                                        class="p-button-danger p-button-sm"
+                                        :disabled="row.can_delete === false"
+                                        @click="onDelete(row.id)"
+                                    />
                                 </template>
 
                                 <template v-else>

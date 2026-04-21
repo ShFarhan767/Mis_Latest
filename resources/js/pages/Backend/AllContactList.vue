@@ -8,6 +8,8 @@ import Dialog from "primevue/dialog";
 import Calendar from 'primevue/calendar'; // PrimeVue Calendar
 import Multiselect from "vue-multiselect";
 import AppLayout from "@/Layouts/AppLayout.vue";
+import DemoPresenterDashboard from "@/components/DemoPresenterDashboard.vue";
+import DemoNotesDialog from "@/components/demo/DemoNotesDialog.vue";
 
 const toast = useToast();
 const customers = ref<any[]>([]);
@@ -49,8 +51,26 @@ const openModal = (title: string, content: string) => {
 const openHistoryModal = async (customer: any) => {
     try {
         const { data } = await axios.get(`/api/customers/${customer.id}/history`);
+
+        // Normalize service_type
+        historyData.value = data
+            .map((item: any) => ({
+                ...item,
+                service_type: Array.isArray(item.service_type)
+                    ? item.service_type
+                    : (() => {
+                        try { return JSON.parse(item.service_type || "[]"); }
+                        catch { return []; }
+                    })()
+            }))
+            // Sort: latest first, but keep 'Customer created' at bottom
+            .sort((a, b) => {
+                if (a.note === 'Customer created') return 1;      // created last
+                if (b.note === 'Customer created') return -1;     // created last
+                return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+            });
+
         modalTitle.value = `History of ${customer.name}`;
-        historyData.value = data;
         showHistoryModal.value = true;
     } catch {
         toast.add({ severity: 'error', summary: 'Error', detail: 'Failed to fetch history', life: 3000 });
@@ -126,6 +146,7 @@ const updateNote = async () => {
 const allUsers = ref<any[]>([]);
 const currentUser = ref<any | null>(null);
 const users = ref<any[]>([]);
+const demoPresenters = ref<any[]>([]);
 
 // ====================
 // FETCH LOGGED-IN STAFF
@@ -134,7 +155,8 @@ const fetchUsers = async () => {
     try {
         const { data } = await axios.get('/api/users');
 
-        allUsers.value = data; // for showing Created By
+        // Keep only admin and staff role users
+        allUsers.value = data.filter((u: any) => u.role === 'admin' || u.role === 'staff');
         // ✅ Keep only staff role users
         users.value = data.filter((user: any) => user.role === 'staff');
 
@@ -145,6 +167,21 @@ const fetchUsers = async () => {
             detail: 'Failed to fetch users',
             life: 3000,
         });
+    }
+};
+
+const fetchDemoPresenters = async () => {
+    try {
+        const { data } = await axios.get('/api/demo-presenters');
+        demoPresenters.value = Array.isArray(data) ? data : data?.data || [];
+    } catch (error) {
+        toast.add({
+            severity: 'error',
+            summary: 'Error',
+            detail: 'Failed to fetch demo presenters',
+            life: 3000,
+        });
+        demoPresenters.value = [];
     }
 };
 
@@ -190,6 +227,7 @@ const fetchNewCustomers = async () => {
                         .join(", ") ?? "-",
 
                 assigned_users: c.assigned_staff ? [c.assigned_staff] : [],
+                demo_notes_unread: c.demo_notes_unread ?? 0,
             }));
 
         customers.value = list;
@@ -257,29 +295,61 @@ const openServiceTypeModal = (customer: any) => {
     showServiceTypeModal.value = true;
 };
 
+// Watch multiselect changes
 watch(selectedOldServiceTypes, (val) => {
-    serviceTypes.value = [...new Set([...val, ...serviceTypes.value])];
+    // Remove items that were unselected
+    serviceTypes.value = serviceTypes.value.filter(s => val.includes(s));
+
+    // Add back any newly selected items
+    val.forEach(s => {
+        if (!serviceTypes.value.includes(s)) {
+            serviceTypes.value.push(s);
+        }
+    });
 });
-// Add service type
-const addServiceType = () => {
+
+// Add service type from input
+const addServiceType = async () => {
     const value = newServiceType.value.trim();
     if (!value) return;
 
-    if (!serviceTypes.value.includes(value)) {
-        serviceTypes.value.push(value);
-        selectedOldServiceTypes.value.push(value); // auto-select it
+    // 1️⃣ Save to DB if not already in options
+    if (!allServiceTypeOptions.value.includes(value)) {
+        try {
+            const { data } = await axios.post('/api/service-types', {
+                service_type_name: value, // use the correct field name
+                status: 'Running',         // required field (adjust if needed)
+            });
+
+            // Add to multiselect options
+            allServiceTypeOptions.value.push(data.service_type_name);
+
+        } catch (error: any) {
+            toast.add({
+                severity: 'error',
+                summary: 'Error',
+                detail: error.response?.data?.message || 'Failed to add service type',
+                life: 3000
+            });
+            return;
+        }
     }
 
-    newServiceType.value = "";
-};
+    // 2️⃣ Add to the current customer's service type list
+    if (!serviceTypes.value.includes(value)) {
+        serviceTypes.value.push(value);
+        selectedOldServiceTypes.value.push(value); // auto-select in multiselect
+    }
 
+    // Clear input
+    newServiceType.value = '';
+};
 
 // Save service types
 const saveServiceTypes = async () => {
     if (!editingServiceCustomer.value) return;
 
     try {
-        // ✅ Send service_type as an array
         await axios.put(`/api/customers/${editingServiceCustomer.value.id}/service-type`, {
             service_type: serviceTypes.value
         });
@@ -293,7 +363,7 @@ const saveServiceTypes = async () => {
 
         // Update local table
         const customer = customers.value.find(c => c.id === editingServiceCustomer.value?.id);
-        if (customer) customer.service_type = [...serviceTypes.value]; // keep as array
+        if (customer) customer.service_type = [...serviceTypes.value];
 
         showServiceTypeModal.value = false;
         editingServiceCustomer.value = null;
@@ -388,21 +458,56 @@ const updateFollowUpDate = async () => {
 const showStaffStatusModal = ref(false);
 const editingStaffCustomer = ref<any | null>(null);
 const selectedStaffStatus = ref("");
+const selectedDemoPresenter = ref<any | null>(null);
+
+const showDemoNotes = ref(false);
+const demoNotesCustomer = ref<any | null>(null);
 
 // Open modal
 const openStaffStatusModal = (customer: any) => {
     editingStaffCustomer.value = customer;
     selectedStaffStatus.value = customer.staff_status || "";
+    selectedDemoPresenter.value =
+        customer.demo_presenter ||
+        demoPresenters.value.find((p: any) => p.id === customer.demo_presenter_id) ||
+        null;
     showStaffStatusModal.value = true;
 };
+
+const openDemoNotes = (customer: any) => {
+    demoNotesCustomer.value = customer;
+    showDemoNotes.value = true;
+};
+
+watch(selectedStaffStatus, (val) => {
+    if (val !== "Need To Show Demo") {
+        selectedDemoPresenter.value = null;
+    }
+});
 
 // Save
 const saveStaffStatus = async () => {
     if (!editingStaffCustomer.value) return;
 
-    await updateStaffStatus(editingStaffCustomer.value.id, selectedStaffStatus.value);
+    if (selectedStaffStatus.value === "Need To Show Demo" && !selectedDemoPresenter.value) {
+        toast.add({
+            severity: "warn",
+            summary: "Missing Demo Presenter",
+            detail: "Please assign a demo presenter for 'Need To Show Demo'.",
+            life: 3000,
+        });
+        return;
+    }
+
+    await updateStaffStatus(
+        editingStaffCustomer.value.id,
+        selectedStaffStatus.value,
+        selectedStaffStatus.value === "Need To Show Demo" ? selectedDemoPresenter.value?.id : null
+    );
 
     showStaffStatusModal.value = false;
+    editingStaffCustomer.value = null;
+    selectedDemoPresenter.value = null;
 };
 
 // ====================
@@ -414,6 +519,7 @@ const staffStatusOptions = [
     "Serious Interested",
     "Call For Demo",
     "Need To Show Demo",
+    "Demo Done",
     "Need Direct Meeting",
     "Future",
     "Unwanted",
@@ -422,10 +528,11 @@ const staffStatusOptions = [
     "Cancelled",
 ];
 
-const updateStaffStatus = async (customerId: number, status: string) => {
+const updateStaffStatus = async (customerId: number, status: string, demoPresenterId: number | null = null) => {
     try {
         await axios.put(`/api/customers/${customerId}/staff-status`, {
             staff_status: status,
+            demo_presenter_id: demoPresenterId,
         });
 
         toast.add({
@@ -448,6 +555,8 @@ const updateStaffStatus = async (customerId: number, status: string) => {
         if (customer) {
             customer.staff_status = status;
             activeTab.value = status; // 👈 jump to Future tab automatically
+            customer.demo_presenter_id = demoPresenterId;
+            customer.demo_presenter = demoPresenters.value.find((p: any) => p.id === demoPresenterId) || null;
         }
 
     } catch (error: any) {
@@ -461,23 +570,48 @@ const updateStaffStatus = async (customerId: number, status: string) => {
 };
 
 
-const activeTab = ref<string>("All Assign");
+const activeTab = ref<string>("All Customer");
 
-const statusTabs = [
-    "All Assign",
-    "All Customer",
-    "Today Customers", // ✅ new tab
-    "New",
-    "Interested",
-    "Serious Interested",
-    "Call For Demo",
-    "Need To Show Demo",
-    "Need Direct Meeting",
-    "Future",
-    "Unwanted",
-    "Final Pending Client",
-    "Success Client",
-];
+const statusTabs = computed(() => {
+    const commonTabs = [
+        "All Customer",
+        "All Assign",
+        "Today Customers",
+        "Interested",
+        "Serious Interested",
+        "Call For Demo",
+        "Need To Show Demo",
+        "Demo Done",
+        "Need Direct Meeting",
+        "Future",
+        "Unwanted",
+        "Final Pending Client",
+        "Success Client",
+    ];
+
+    // ✅ Admin sees "New"
+    if (currentUser.value?.role === "admin") {
+        return [
+            "All Customer",
+            "All Assign",
+            "New",
+            "Today Customers",
+            "Interested",
+            "Serious Interested",
+            "Call For Demo",
+            "Need To Show Demo",
+            "Demo Done",
+            "Need Direct Meeting",
+            "Future",
+            "Unwanted",
+            "Final Pending Client",
+            "Success Client",
+        ];
+    }
+
+    // ❌ Staff does NOT see "New"
+    return commonTabs;
+});
 
 const isNewStatus = (c: any) => !c.staff_status || c.staff_status === "New";
 
@@ -486,37 +620,89 @@ const allAssignedCustomers = computed(() =>
 );
 
 const statusCount = (status: string) => {
-    const today = new Date();
-    const isToday = (dateStr: string) => {
-        const d = new Date(dateStr);
-        return (
-            d.getFullYear() === today.getFullYear() &&
-            d.getMonth() === today.getMonth() &&
-            d.getDate() === today.getDate()
-        );
-    };
+    let baseList = customers.value;
 
-    if (status === "All Customer") {
-        return customers.value.length;
+    // 🔒 apply staff visibility rule to count also
+    if (currentUser.value?.role === 'staff') {
+        const today = new Date();
+        const isToday = (dateStr: string) => {
+            const d = new Date(dateStr);
+            return d.getFullYear() === today.getFullYear() &&
+                d.getMonth() === today.getMonth() &&
+                d.getDate() === today.getDate();
+        };
+
+        baseList = baseList.filter(c => {
+            if (c.assigned_staff_id === currentUser.value.id) return true;
+
+            if (
+                status === "Today Customers" &&
+                c.created_by === currentUser.value.id &&
+                c.created_at &&
+                isToday(c.created_at)
+            ) return true;
+
+            return false;
+        });
     }
 
+    if (status === "All Customer") return baseList.length;
+
     if (status === "All Assign") {
-        return allAssignedCustomers.value.length;
+        return baseList.filter(c => c.assigned_staff_id !== null).length;
     }
 
     if (status === "Today Customers") {
-        return customers.value.filter(c => c.created_at && isToday(c.created_at)).length;
+        const today = new Date();
+        return baseList.filter(c => {
+            const d = new Date(c.created_at);
+            return d.toDateString() === today.toDateString();
+        }).length;
     }
 
-    if (status === "New") return customers.value.filter(isNewStatus).length;
+    if (status === "New") {
+        return baseList.filter(c => !c.staff_status || c.staff_status === "New").length;
+    }
 
-    return customers.value.filter(c => c.staff_status === status).length;
+    return baseList.filter(c => c.staff_status === status).length;
 };
 
 const filteredCustomers = computed(() => {
     let list = customers.value;
 
-    // --- Search Query (name / phone) ---
+    // Staff can only see customers they are assigned to
+    if (currentUser.value?.role === 'staff') {
+        const today = new Date();
+
+        const isToday = (dateStr: string) => {
+            const d = new Date(dateStr);
+            return (
+                d.getFullYear() === today.getFullYear() &&
+                d.getMonth() === today.getMonth() &&
+                d.getDate() === today.getDate()
+            );
+        };
+
+        list = list.filter(c => {
+            // ✅ Assigned → always visible
+            if (c.assigned_staff_id === currentUser.value.id) return true;
+
+            // ✅ Not assigned BUT created today → visible ONLY in Today Customers tab
+            if (
+                activeTab.value === "Today Customers" &&
+                c.created_by === currentUser.value.id &&
+                c.created_at &&
+                isToday(c.created_at)
+            ) {
+                return true;
+            }
+
+            // ❌ Otherwise hidden
+            return false;
+        });
+    }
+
+    // --- Search Query ---
     if (searchQuery.value.trim()) {
         const q = searchQuery.value.toLowerCase();
         list = list.filter(c =>
@@ -525,7 +711,7 @@ const filteredCustomers = computed(() => {
         );
     }
 
-    // --- Created By Filter ---
+    // --- Created By Filter (for admins) ---
     if (filterCreatedBy.value) {
         list = list.filter(c => c.created_by === filterCreatedBy.value.id);
     }
@@ -545,27 +731,48 @@ const filteredCustomers = computed(() => {
     }
 
     // --- Status Tabs ---
+    const today = new Date();
+    const isToday = (dateStr: string) => {
+        const d = new Date(dateStr);
+        return d.getFullYear() === today.getFullYear() &&
+            d.getMonth() === today.getMonth() &&
+            d.getDate() === today.getDate();
+    };
+
     if (activeTab.value === "All Assign") {
         list = list.filter(c => c.assigned_staff_id !== null);
     } else if (activeTab.value === "New") {
-        list = list.filter(c => isNewStatus(c));
+        list = list.filter(c => !c.staff_status || c.staff_status === "New");
     } else if (activeTab.value === "Today Customers") {
-        const today = new Date();
-        list = list.filter(c => {
-            if (!c.created_at) return false;
-            const created = new Date(c.created_at);
-            return (
-                created.getFullYear() === today.getFullYear() &&
-                created.getMonth() === today.getMonth() &&
-                created.getDate() === today.getDate()
-            );
-        });
+        list = list.filter(c => c.created_at && isToday(c.created_at));
     } else if (activeTab.value !== "All Customer") {
         list = list.filter(c => c.staff_status === activeTab.value);
     }
 
     return list;
 });
+
+const showFilteredCount = computed(() => {
+    // Show badge only if any filter is applied or search query exists
+    return searchQuery.value.trim() || filterCreatedBy.value || filterCreatedDate.value;
+});
+
+const filteredCount = computed(() => filteredCustomers.value.length);
+
+const formattedUsers = computed(() =>
+    allUsers.value.map(u => ({
+        ...u,
+        label: u.mobile ? `${u.name} (${u.mobile})` : u.name, // Name + mobile
+        value: u.id
+    }))
+);
+
+const getDemoPresenterName = (row: any) => {
+    if (!row) return "-";
+    if (row.demo_presenter?.name) return row.demo_presenter.name;
+    const found = demoPresenters.value.find((p: any) => p.id === row.demo_presenter_id);
+    return found?.name || "-";
+};
 
 const searchResults = computed(() => {
     if (!searchQuery.value.trim()) return customers.value;
@@ -587,8 +794,6 @@ watch(searchResults, (list) => {
         activeTab.value = statuses[0];
     }
 });
-
-
 
 const formatDate = (date: string | null) => {
     if (!date) return '-';
@@ -650,6 +855,7 @@ const tableRows = computed(() =>
 
 onMounted(async () => {
     await fetchUsers();
+    await fetchDemoPresenters();
     await fetchCurrentUser();
     await fetchServiceTypes(); // 👈 add this
     fetchNewCustomers();
@@ -660,11 +866,25 @@ const getStaffName = (staffId: number | null, fallback = '-') => {
     const staff = allUsers.value.find(u => u.id === staffId);
     return staff ? staff.name : fallback;
 };
+
+const formatDateTime = (dateStr: string) => {
+    const date = new Date(dateStr);
+    return date.toLocaleString('en-GB', {
+        day: 'numeric',       // 4
+        month: 'long',        // March
+        year: 'numeric',      // 2026
+        hour: 'numeric',      // 2
+        minute: '2-digit',    // 30
+        hour12: true          // PM
+    });
+};
 </script>
 
 <template>
     <AppLayout>
-        <div class="p-6 bg-gray-50 min-h-screen">
+        <DemoPresenterDashboard v-if="currentUser?.role === 'demo_presenter'" />
+
+        <div v-else class="p-6 bg-gray-50 min-h-screen">
             <Toast />
 
             <div class="mb-6 border-l-4 border-green-600 pl-5">
@@ -717,12 +937,12 @@ const getStaffName = (staffId: number | null, fallback = '-') => {
                 <div class="flex flex-wrap gap-6 items-end">
 
                     <!-- Created By Filter -->
-                    <div class="flex flex-col w-full md:w-64" v-if="currentUser?.role === 'admin'">
+                    <div class="flex flex-col w-full md:w-70" v-if="currentUser?.role === 'admin'">
                         <label class="text-sm font-semibold text-gray-600 mb-1">
                             <i class="pi pi-user mr-1 text-blue-500"></i>
                             Created By
                         </label>
-                        <Multiselect v-model="filterCreatedBy" :options="allUsers" label="name" track-by="id"
+                        <Multiselect v-model="filterCreatedBy" :options="formattedUsers" label="label" track-by="value"
                             placeholder="Select staff" class="rounded-lg" />
                     </div>
 
@@ -753,11 +973,18 @@ const getStaffName = (staffId: number | null, fallback = '-') => {
                             Clear Filters
                         </button>
                     </div>
-
                 </div>
             </div>
 
-            <div class="bg-white rounded-lg shadow-lg p-6 overflow-x-auto">
+            <div class="flex justify-center items-center gap-2">
+                <!-- Filtered Count Badge -->
+                <span v-if="showFilteredCount"
+                    class="inline-block bg-blue-600 text-white text-base font-semibold px-5 py-2 rounded-lg shadow mb-1">
+                    Total Found - ({{ filteredCount }})
+                </span>
+            </div>
+
+            <div class="bg-white rounded-lg shadow-lg p-2 overflow-x-auto">
                 <DataTable title="All Customers Lists" :columns="columns" :rows="tableRows" :showSearch="true"
                     @openModal="openModal">
 
@@ -786,6 +1013,24 @@ const getStaffName = (staffId: number | null, fallback = '-') => {
                                         transition" title="Add Note" @click="openNoteModal(row)">
                                         <i class="pi pi-pencil text-xs"></i>
                                     </button>
+
+                                    <!-- Demo Notes (chat) -->
+                                    <button v-if="row.staff_status === 'Need To Show Demo' || row.staff_status === 'Demo Done'"
+                                        class="relative w-7 h-7 flex items-center justify-center
+                                        rounded-md bg-purple-50 text-purple-700
+                                        hover:bg-purple-100 hover:text-purple-800
+                                        transition"
+                                        title="Demo Notes"
+                                        @click="openDemoNotes(row)"
+                                    >
+                                        <i class="pi pi-comments text-xs"></i>
+                                        <span
+                                            v-if="row.demo_notes_unread > 0"
+                                            class="absolute -top-2 -right-2 min-w-5 h-5 px-1 rounded-full bg-red-600 text-white text-[10px] flex items-center justify-center"
+                                        >
+                                            {{ row.demo_notes_unread }}
+                                        </span>
+                                    </button>
                                 </div>
                             </div>
 
@@ -810,6 +1055,12 @@ const getStaffName = (staffId: number | null, fallback = '-') => {
                             <!-- Staff Status -->
                             <span class="text-xs text-gray-500">
                                 {{ row.staff_status || '-' }}
+                            </span>
+
+                            <span v-if="row.staff_status === 'Need To Show Demo' && (row.demo_presenter || row.demo_presenter_id)"
+                                class="text-xs text-purple-600">
+                                Demo Presenter:
+                                {{ getDemoPresenterName(row) }}
                             </span>
                         </div>
                     </template>
@@ -1021,6 +1272,26 @@ const getStaffName = (staffId: number | null, fallback = '-') => {
                             {{ status }}
                         </option>
                     </select>
+
+                    <div v-if="selectedStaffStatus === 'Need To Show Demo'" class="flex flex-col gap-2">
+                        <label class="font-medium">
+                            Assign Demo Presenter <span class="text-red-600">*</span>
+                        </label>
+                        <Multiselect
+                            v-model="selectedDemoPresenter"
+                            :options="demoPresenters"
+                            label="name"
+                            track-by="id"
+                            placeholder="Select demo presenter"
+                            :searchable="true"
+                            :close-on-select="true"
+                            :allow-empty="false"
+                            class="w-full"
+                        />
+                        <p class="text-xs text-gray-500">
+                            This is required for <span class="font-medium">Need To Show Demo</span>.
+                        </p>
+                    </div>
                 </div>
 
                 <div class="text-right mt-6 flex gap-2 justify-end">
@@ -1086,77 +1357,116 @@ const getStaffName = (staffId: number | null, fallback = '-') => {
 
             </Dialog>
 
-            <!--HISTORY  MODAL -->
-            <Dialog v-model:visible="showHistoryModal" modal :header="modalTitle" :style="{ width: '50rem' }">
+            <Dialog v-model:visible="showHistoryModal" modal :header="modalTitle"
+                :style="{ width: '60rem', maxHeight: '80vh' }" class="overflow-hidden rounded-xl shadow-2xl">
+                <div class="overflow-y-auto px-6 py-5 relative">
 
-                <div class="max-h-96 overflow-y-auto space-y-4">
-                    <div v-if="historyData.length" class="space-y-4">
-                        <div v-for="(item, idx) in historyData" :key="idx" class="relative pl-8">
-                            <!-- Timeline Dot -->
-                            <div class="absolute left-0 top-1.5 w-3 h-3 bg-blue-600 rounded-full"></div>
-                            <!-- Timeline Line -->
-                            <div v-if="idx !== historyData.length - 1"
-                                class="absolute left-1.5 top-6 w-0.5 h-full bg-gray-300">
-                            </div>
+                    <!-- Timeline Container -->
+                    <div v-if="historyData.length" class="relative">
 
-                            <!-- History Card -->
-                            <div class="bg-white p-4 rounded-lg shadow hover:shadow-md transition">
-                                <div class="flex justify-between items-center mb-2">
-                                    <span class="text-sm text-gray-500">{{ new Date(item.created_at).toLocaleString()
-                                    }}</span>
+                        <!-- Vertical line connecting all dots -->
+                        <div class="absolute left-1.5 top-2 bottom-0 w-1 bg-gray-200 rounded-full"></div>
 
-                                    <span class="text-sm font-semibold text-blue-600">
-                                        {{ getStaffName(item.staff_id) }}
-                                    </span>
+                        <template v-for="(item, idx) in historyData" :key="item.id">
+                            <div class="relative flex items-start gap-8 group">
+
+                                <!-- Timeline Dot -->
+                                <div class="flex flex-col items-center z-10">
+                                    <div class="w-4 h-4 rounded-full shadow relative top-2"
+                                        :class="item.note === 'Customer created' ? 'bg-green-500' : 'bg-indigo-600'">
+                                    </div>
+                                    <!-- Connecting line -->
+                                    <div v-if="idx !== historyData.length - 1" class="flex-1 w-1 bg-gray-200"></div>
                                 </div>
 
-                                <div v-if="item.note && item.note.trim()"
-                                    class="text-gray-800 whitespace-pre-line mb-2">
-                                    <strong>Note:</strong> {{ item.note }}
-                                </div>
+                                <!-- History Card -->
+                                <div class="flex-1 bg-white p-5 rounded-xl shadow border-l-4 relative -top-1 mb-5"
+                                    :class="item.note === 'Customer created' ? 'border-green-500' : 'border-indigo-600'">
 
-                                <div v-if="item.old_data && Object.keys(item.old_data).length"
-                                    class="bg-gray-50 p-2 rounded border-l-4 border-gray-300 text-sm text-gray-600">
-                                    <strong>Changed Fields:</strong>
-                                    <ul class="list-disc list-inside mt-1">
-                                        <li v-for="(value, key) in item.old_data" :key="key" class="flex gap-2">
-                                            <span class="font-medium capitalize">
-                                                {{ key.replace(/_/g, ' ') }}:
+                                    <!-- Created Customer Card -->
+                                    <div v-if="item.note === 'Customer created' || item.customer_name">
+                                        <div class="flex justify-between items-center mb-3">
+                                            <span class="text-green-600 font-bold">Customer Created</span>
+                                            <span class="text-green-600 text-sm font-medium">
+                                                {{ formatDateTime(item.created_at) }}
                                             </span>
+                                        </div>
+                                        <div class="grid grid-cols-2 gap-4 text-gray-700 text-sm">
+                                            <div><strong>Name:</strong> {{ item.customer_name || '-' }}</div>
+                                            <div>
+                                                <strong>Service Type:</strong>
+                                                {{ item.service_type?.length ? item.service_type.join(', ') : '-' }}
+                                            </div>
+                                            <div><strong>Email:</strong> {{ item.email || '-' }}</div>
+                                            <div><strong>Phone:</strong> {{ item.phone || '-' }}</div>
+                                        </div>
+                                    </div>
 
-                                            <!-- HTML content -->
-                                            <span v-if="typeof value === 'string' && value.includes('<')"
-                                                v-html="formatHistoryValue(key, value)"
-                                                class="prose prose-sm max-w-none"></span>
-
-                                            <!-- Normal text / formatted date -->
-                                            <span v-else class="text-gray-700">
-                                                {{ formatHistoryValue(key, value) }}
+                                    <!-- Staff History Card -->
+                                    <div v-else>
+                                        <!-- Header: Staff + Date -->
+                                        <div class="flex justify-between items-center mb-3">
+                                            <div class="flex items-center gap-3">
+                                                <i class="pi pi-user text-indigo-600"></i>
+                                                <span class="text-indigo-600 font-semibold text-sm">
+                                                    {{ getStaffName(item.staff_id) || '-' }}
+                                                </span>
+                                            </div>
+                                            <span class="text-indigo-600 text-sm font-medium">
+                                                {{ formatDateTime(item.created_at) }}
                                             </span>
-                                        </li>
-                                    </ul>
+                                        </div>
+
+                                        <!-- Note -->
+                                        <div v-if="item.note && item.note.trim()" class="mb-3 text-gray-800">
+                                            <strong>Note:</strong>
+                                            <span class="mt-1"> {{ item.note }}</span>
+                                        </div>
+
+                                        <!-- Changed Fields -->
+                                        <div v-if="item.old_data && Object.keys(item.old_data).length"
+                                            class="bg-gray-50 p-4 rounded-lg border border-gray-200">
+                                            <strong class="text-indigo-700">Changed Fields:</strong>
+                                            <div class="grid grid-cols-2 gap-3 mt-2 text-sm text-gray-700">
+                                                <div v-for="(value, key) in item.old_data" :key="key"
+                                                    class="flex gap-2">
+                                                    <span class="font-medium capitalize">{{ key.replace(/_/g, ' ')
+                                                    }}:</span>
+                                                    <span v-if="typeof value === 'string' && value.includes('<')"
+                                                        v-html="formatHistoryValue(key, value)">
+                                                    </span>
+                                                    <span v-else>{{ formatHistoryValue(key, value) }}</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
                                 </div>
+
                             </div>
-                        </div>
+                        </template>
+
                     </div>
 
-                    <div v-else class="text-center text-gray-500 py-8">
+                    <!-- No History -->
+                    <div v-else class="text-center text-gray-400 py-16 text-lg">
                         No history available
                     </div>
+
                 </div>
 
+                <!-- Footer -->
                 <div class="text-right mt-6">
                     <button
-                        class="px-5 py-2 bg-blue-600 text-white font-medium rounded-md shadow hover:bg-blue-700 transition"
+                        class="px-6 py-2 bg-indigo-600 text-white font-medium rounded-lg shadow hover:bg-indigo-700 transition"
                         @click="showHistoryModal = false">
                         Close
                     </button>
                 </div>
             </Dialog>
 
-
             <!-- Add Note Modal -->
-            <Dialog v-model:visible="showExtraNoteModal" header="Customer Notes & History" :style="{ width: '50rem' }">
+            <Dialog v-model:visible="showExtraNoteModal" header="Customer Notes &       History" :style="{ width: '50rem' }">
                 <div class="mb-4">
                     <textarea v-model="newNote" class="w-full border rounded-lg p-3 focus:ring-2 focus:ring-blue-400"
                         rows="4" placeholder="Write a new note here..."></textarea>
@@ -1224,6 +1534,24 @@ const getStaffName = (staffId: number | null, fallback = '-') => {
                         class="bg-gray-300 px-5 py-2 rounded-lg hover:bg-gray-400 transition">Close</button>
                 </div>
             </Dialog>
+
+            <DemoNotesDialog
+                :visible="showDemoNotes"
+                :customerId="demoNotesCustomer?.id ?? null"
+                :customerName="demoNotesCustomer?.name ?? ''"
+                @update:visible="(v:boolean) => {
+                    showDemoNotes = v;
+                    if (!v) {
+                        const id = demoNotesCustomer?.id;
+                        if (id) {
+                            const c = customers.find((x:any) => x.id === id);
+                            if (c) c.demo_notes_unread = 0;
+                        }
+                        demoNotesCustomer = null;
+                        fetchNewCustomers();
+                    }
+                }"
+            />
 
         </div>
     </AppLayout>

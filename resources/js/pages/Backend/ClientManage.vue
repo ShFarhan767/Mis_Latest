@@ -48,12 +48,12 @@ const form = ref({
     number: "",
     oparetor_number: "",
     address: "",
-    country: null,
-    area: null,
+    country: null as any,
+    area: null as any,
     project_name: "",
     referred_by_name: "",
     referred_by_number: "",
-    business_type: null,
+    business_type: null as any,
     status: "Running",
 });
 
@@ -70,7 +70,7 @@ const hasReferral = ref(false);
 const fetchEntries = async () => {
     try {
         const { data } = await axios.get("/api/clients");
-        entries.value = data;
+        entries.value = Array.isArray(data) ? data : data?.data || [];
     } catch (error) {
         toast.add({ severity: "error", summary: "Error", detail: "Failed to fetch clients.", life: 3000 });
     }
@@ -79,16 +79,14 @@ const fetchEntries = async () => {
 // Fetch business types
 const fetchBusinessTypes = async () => {
     try {
-        const { data } = await axios.get("/api/business-types"); // make sure you have this endpoint
-        businessTypeOptions.value = data;
+        const { data } = await axios.get("/api/business-types");
+        businessTypeOptions.value = Array.isArray(data) ? data : data?.data || [];
     } catch (error) {
         toast.add({ severity: "error", summary: "Error", detail: "Failed to fetch business types.", life: 3000 });
     }
 };
 
-const runningBusinessTypes = computed(() =>
-    businessTypeOptions.value.filter(bt => bt.status === "Running")
-);
+const runningBusinessTypes = computed(() => businessTypeOptions.value.filter((bt) => bt.status === "Running"));
 
 // Country options
 const countryOptions = ref<any[]>([]);
@@ -101,7 +99,8 @@ const editingCountryId = ref<number | null>(null);
 const fetchCountries = async () => {
     try {
         const { data } = await axios.get("/api/countries");
-        countryOptions.value = data.map((c: any) => ({
+        const raw = Array.isArray(data) ? data : data?.data || [];
+        countryOptions.value = raw.map((c: any) => ({
             id: c.id,
             name: c.country_name,
             status: c.status,
@@ -111,26 +110,24 @@ const fetchCountries = async () => {
     }
 };
 
-const runningCountries = computed(() =>
-    countryOptions.value.filter(c => c.status === "Running")
-);
+const runningCountries = computed(() => countryOptions.value.filter((c) => c.status === "Running"));
 
 // Area options
 const areaOptions = ref<any[]>([]);
 
 // Area modal
 const showAreaModal = ref(false);
-const newArea = ref({ name: "", status: "Running" });
+const newArea = ref({ name: "", status: "Running", country: null as any });
 const editingAreaId = ref<number | null>(null);
 
 const fetchAreas = async () => {
     try {
         const { data } = await axios.get("/api/areas");
-        // Map backend field to frontend
-        areaOptions.value = data.map((a: any) => ({
+        const raw = Array.isArray(data) ? data : data?.data || [];
+        areaOptions.value = raw.map((a: any) => ({
             id: a.id,
-            country_name: a.country_name, // keep the country name for display
-            name: a.area_name,  // <-- map backend `area_name` to frontend `name`
+            country_name: a.country_name,
+            name: a.area_name,
             status: a.status,
         }));
     } catch (error) {
@@ -138,16 +135,11 @@ const fetchAreas = async () => {
     }
 };
 
-const runningAreas = computed(() =>
-    areaOptions.value.filter(a => a.status === "Running")
-);
+const runningAreas = computed(() => areaOptions.value.filter((a) => a.status === "Running"));
 
 const filteredAreasByCountry = computed(() => {
     if (!form.value.country) return [];
-
-    return runningAreas.value.filter(
-        a => a.country_name === form.value.country.name
-    );
+    return runningAreas.value.filter((a) => a.country_name === form.value.country.name);
 });
 
 onMounted(() => {
@@ -160,26 +152,33 @@ onMounted(() => {
 // Submit client form
 const submitForm = async () => {
     try {
-        if (!form.value.name || !form.value.number || !form.value.project_name) {
-            toast.add({ severity: "warn", summary: "Warning", detail: "Please fill all required fields.", life: 3000 });
+        // REQUIRED (add more if you want)
+        if (
+            !form.value.company_name ||
+            !form.value.business_type ||
+            !form.value.name ||
+            !form.value.number ||
+            !form.value.operator_name ||
+            !form.value.oparetor_number ||
+            !form.value.project_name ||
+            !form.value.country ||
+            !form.value.area ||
+            !form.value.address ||
+            !form.value.status
+        ) {
+            toast.add({ severity: "warn", summary: "Warning", detail: "Please fill all required fields (*).", life: 3000 });
             return;
         }
 
-        // clone form
-        const payload = { ...form.value };
+        const payload: any = { ...form.value };
 
-        // area name
-        if (payload.area && payload.area.name) {
-            payload.area_name = payload.area.name;
-        }
-
+        if (payload.area?.name) payload.area_name = payload.area.name;
         delete payload.area;
 
-        // country
-        if (payload.country?.name) {
-            payload.country_name = payload.country.name;
-        }
+        if (payload.country?.name) payload.country_name = payload.country.name;
         delete payload.country;
+
+        if (payload.business_type?.name) payload.business_type = payload.business_type.name;
 
         if (editingId.value) {
             await axios.put(`/api/clients/${editingId.value}`, payload);
@@ -197,6 +196,7 @@ const submitForm = async () => {
             number: "",
             oparetor_number: "",
             address: "",
+            country: null,
             area: null,
             project_name: "",
             referred_by_name: "",
@@ -207,7 +207,6 @@ const submitForm = async () => {
 
         hasReferral.value = false;
         await fetchEntries();
-
     } catch (error) {
         toast.add({ severity: "error", summary: "Error", detail: "Failed to save client.", life: 3000 });
     }
@@ -217,35 +216,29 @@ const submitForm = async () => {
 const editEntry = (entry: any) => {
     editingId.value = entry.id;
 
-    // find business type
-    const selectedBusinessType = businessTypeOptions.value.find(
-        bt => bt.name === entry.business_type
-    );
+    const selectedBusinessType =
+        businessTypeOptions.value.find((bt) => bt.name === entry.business_type) || null;
 
-    const selectedArea = areaOptions.value.find(
-        a => a.name === entry.area_name
-    );
+    const selectedArea = areaOptions.value.find((a) => a.name === entry.area_name) || null;
 
-    // find matching country
-    const selectedCountry = countryOptions.value.find(
-        c => c.name === entry.country_name
-    );
+    const selectedCountry = countryOptions.value.find((c) => c.name === entry.country_name) || null;
 
     form.value = {
-        name: entry.name,
-        company_name: entry.company_name,
-        operator_name: entry.operator_name,
-        number: entry.number,
-        oparetor_number: entry.oparetor_number,
-        address: entry.address,
-        country: selectedCountry || null,
-        area: selectedArea || null,
-        project_name: entry.project_name,
-        referred_by_name: entry.referred_by_name,
-        referred_by_number: entry.referred_by_number,
-        business_type: selectedBusinessType || null,
-        status: entry.status,
+        name: entry.name ?? "",
+        company_name: entry.company_name ?? "",
+        operator_name: entry.operator_name ?? "",
+        number: entry.number ?? "",
+        oparetor_number: entry.oparetor_number ?? "",
+        address: entry.address ?? "",
+        country: selectedCountry,
+        area: selectedArea,
+        project_name: entry.project_name ?? "",
+        referred_by_name: entry.referred_by_name ?? "",
+        referred_by_number: entry.referred_by_number ?? "",
+        business_type: selectedBusinessType,
+        status: entry.status ?? "Running",
     };
+
     hasReferral.value = !!(entry.referred_by_name || entry.referred_by_number);
     window.scrollTo({ top: 0, behavior: "smooth" });
 };
@@ -289,32 +282,27 @@ const columns = [
 ];
 
 const tableRows = computed(() =>
-    entries.value.map((entry, index) => ({
+    (entries.value || []).map((entry: any, index: number) => ({
         sn: index + 1,
         id: entry.id,
-
-        company_name: entry.company_name,
+        company_name: entry.company_name ?? "-",
         business_type: entry.business_type ?? "-",
-
-        name: entry.name,
-        number: entry.number,
-        operator_name: entry.operator_name,
-        oparetor_number: entry.oparetor_number,
-        project_name: entry.project_name,
+        name: entry.name ?? "-",
+        number: entry.number ?? "-",
+        operator_name: entry.operator_name ?? "-",
+        oparetor_number: entry.oparetor_number ?? "-",
+        project_name: entry.project_name ?? "-",
         country_name: entry.country_name ?? "-",
         area_name: entry.area_name ?? "-",
-        address: entry.address,
-
+        address: entry.address ?? "-",
         referred_by_name: entry.referred_by_name || "-",
         referred_by_number: entry.referred_by_number || "-",
-
-        status: entry.status,
+        status: entry.status ?? "-",
     }))
 );
 
 const editingBusinessTypeId = ref<number | null>(null);
 
-// save / update business type
 const submitBusinessType = async () => {
     if (!newBusinessType.value.name) return;
 
@@ -344,7 +332,6 @@ const deleteBusinessType = async (id: number) => {
     await fetchBusinessTypes();
 };
 
-// Country Create / Edit and Delete functions
 const submitCountry = async () => {
     if (!newCountry.value.name) return;
 
@@ -384,7 +371,7 @@ const submitArea = async () => {
     const payload = {
         area_name: newArea.value.name,
         status: newArea.value.status,
-        country_name: newArea.value.country.name, // send country name
+        country_name: newArea.value.country.name,
     };
 
     try {
@@ -405,14 +392,8 @@ const submitArea = async () => {
 };
 
 const editArea = (area: any) => {
-    const selectedCountry = countryOptions.value.find(c => c.name === area.country_name);
-
-    newArea.value = {
-        name: area.name,
-        status: area.status,
-        country: selectedCountry || null, // assign object
-    };
-
+    const selectedCountry = countryOptions.value.find((c) => c.name === area.country_name) || null;
+    newArea.value = { name: area.name, status: area.status, country: selectedCountry };
     editingAreaId.value = area.id;
     showAreaModal.value = true;
 };
@@ -427,18 +408,17 @@ const referrerOptions = ref<any[]>([]);
 const selectedReferrer = ref<any>(null);
 
 const fetchReferrers = async (query = "") => {
-    const { data } = await axios.get('/api/clients/search?query=' + query);
-    referrerOptions.value = data;
+    const { data } = await axios.get("/api/clients/search?query=" + query);
+    referrerOptions.value = Array.isArray(data) ? data : data?.data || [];
 };
 
 const onReferrerSelect = (val: any) => {
     if (val?.company_name) {
         form.value.referred_by_name = val.company_name;
-        form.value.referred_by_number = val.number ?? '';
+        form.value.referred_by_number = val.number ?? "";
     }
 };
 
-// when user types new referrer
 const addNewReferrer = (newTag: string) => {
     const obj = { company_name: newTag, number: "" };
     referrerOptions.value.push(obj);
@@ -465,22 +445,23 @@ const addNewReferrer = (newTag: string) => {
                 </template>
 
                 <template #content>
-                    <div class="flex justify-center items-center py-10 bg-gray-50 rounded-lg">
+                    <div class="flex justify-center items-center py-10 bg-gray-50 rounded-lg"
+                        style="background-image: url('/images/form_bg/form_bg.jpg'); background-size: cover; background-position: center;">
                         <form @submit.prevent="submitForm"
                             class="space-y-4 bg-white p-6 rounded-xl shadow-lg w-full max-w-2xl">
-
                             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-
-                                <!-- 1️⃣ Company Name -->
                                 <div>
-                                    <label class="mt-5">Company Name</label>
+                                    <label class="mt-5 font-medium">
+                                        Company Name <span class="text-red-600">*</span>
+                                    </label>
                                     <InputText v-model="form.company_name" class="w-full mt-3" />
                                 </div>
 
-                                <!-- Business Type -->
                                 <div>
                                     <div class="flex justify-between items-center">
-                                        <label>Business Type</label>
+                                        <label class="font-medium">
+                                            Business Type <span class="text-red-600">*</span>
+                                        </label>
                                         <Button icon="pi pi-plus" class="p-button-sm"
                                             @click="showBusinessTypeModal = true" />
                                     </div>
@@ -488,73 +469,78 @@ const addNewReferrer = (newTag: string) => {
                                         label="name" track-by="id" placeholder="Select Business Type" />
                                 </div>
 
-                                <!-- 2️⃣ Client Name -->
                                 <div>
-                                    <label>Client Name</label>
+                                    <label class="font-medium">
+                                        Client Name <span class="text-red-600">*</span>
+                                    </label>
                                     <InputText v-model="form.name" class="w-full" />
                                 </div>
 
-                                <!-- Client Number -->
                                 <div>
-                                    <label>Client Number</label>
+                                    <label class="font-medium">
+                                        Client Number <span class="text-red-600">*</span>
+                                    </label>
                                     <InputText v-model="form.number" class="w-full" />
                                 </div>
 
-                                <!-- 3️⃣ Operator Name -->
                                 <div>
-                                    <label>Operator Name</label>
+                                    <label class="font-medium">
+                                        Operator Name <span class="text-red-600">*</span>
+                                    </label>
                                     <InputText v-model="form.operator_name" class="w-full" />
                                 </div>
 
-                                <!-- Operator Number -->
                                 <div>
-                                    <label>Operator Number</label>
+                                    <label class="font-medium">
+                                        Operator Number <span class="text-red-600">*</span>
+                                    </label>
                                     <InputText v-model="form.oparetor_number" class="w-full" />
                                 </div>
 
-                                <!-- 4️⃣ Project Name -->
                                 <div>
-                                    <label>Project Name</label>
+                                    <label class="font-medium">
+                                        Project Name <span class="text-red-600">*</span>
+                                    </label>
                                     <InputText v-model="form.project_name" class="w-full mt-3" />
                                 </div>
 
-                                <!-- Country -->
                                 <div>
                                     <div class="flex justify-between items-center">
-                                        <label>Country</label>
+                                        <label class="font-medium">
+                                            Country <span class="text-red-600">*</span>
+                                        </label>
                                         <Button icon="pi pi-plus" class="p-button-sm"
                                             @click="showCountryModal = true" />
                                     </div>
-
                                     <Multiselect v-model="form.country" :options="runningCountries" label="name"
                                         track-by="id" placeholder="Select Country" />
                                 </div>
 
-                                <!-- Area -->
                                 <div>
                                     <div class="flex justify-between items-center">
-                                        <label>Area</label>
+                                        <label class="font-medium">
+                                            Area <span class="text-red-600">*</span>
+                                        </label>
                                         <Button icon="pi pi-plus" class="p-button-sm" @click="showAreaModal = true" />
                                     </div>
-
-                                    <Multiselect v-model="form.area" :options="filteredAreasByCountry" label="name" track-by="id"
-                                        placeholder="Select Area" />
+                                    <Multiselect v-model="form.area" :options="filteredAreasByCountry" label="name"
+                                        track-by="id" placeholder="Select Area" />
                                 </div>
 
-                                <!-- Address -->
                                 <div>
-                                    <label>Address</label>
-                                    <InputText v-model="form.address"
-                                        class="w-full border focus:outline-green-500 outline-1 outline-gray-200 rounded-lg mt-3" />
+                                    <label class="font-medium">
+                                        Address <span class="text-red-600">*</span>
+                                    </label>
+                                    <InputText v-model="form.address" class="w-full mt-3" />
                                 </div>
 
-                                <!-- 5️⃣ Status -->
                                 <div class="md:col-span-2">
-                                    <label>Status</label>
+                                    <label class="font-medium">
+                                        Status <span class="text-red-600">*</span>
+                                    </label>
                                     <Multiselect v-model="form.status" :options="statusOptions" />
                                 </div>
 
-                                <!-- 6️⃣ Referred By -->
                                 <div class="md:col-span-2">
                                     <div class="flex items-center gap-2 mb-2">
                                         <input type="checkbox" v-model="hasReferral" id="refCheck" />
@@ -563,16 +549,16 @@ const addNewReferrer = (newTag: string) => {
 
                                     <div v-if="hasReferral" class="grid grid-cols-2 gap-4">
                                         <div class="w-full mt-2">
-                                            <label>Referred By</label>
-
+                                            <label class="font-medium">Referred By</label>
                                             <Multiselect v-model="selectedReferrer" :options="referrerOptions"
-                                                label="company_name" track-by="company_name" placeholder="Search or type referrer name"
-                                                :searchable="true" :taggable="true" @search-change="fetchReferrers"
+                                                label="company_name" track-by="company_name"
+                                                placeholder="Search or type referrer name" :searchable="true"
+                                                :taggable="true" @search-change="fetchReferrers"
                                                 @select="onReferrerSelect" @tag="addNewReferrer" class="w-full" />
                                         </div>
 
                                         <div class="mt-2">
-                                            <label>Referrer Number</label>
+                                            <label class="font-medium">Referrer Number</label>
                                             <InputText v-model="form.referred_by_number" class="w-full" />
                                         </div>
                                     </div>
@@ -590,12 +576,16 @@ const addNewReferrer = (newTag: string) => {
 
             <!-- BUSINESS TYPE MODAL -->
             <Dialog v-model:visible="showBusinessTypeModal" header="Business Types" modal style="width:600px">
-
-                <!-- Add / Edit Form -->
                 <div class="flex justify-center">
                     <div class="grid grid-cols-1 gap-3 mb-4 w-full max-w-sm">
+                        <label class="text-sm font-medium">
+                            Business Type Name <span class="text-red-600">*</span>
+                        </label>
                         <InputText v-model="newBusinessType.name" placeholder="Business Type Name" class="w-full" />
 
+                        <label class="text-sm font-medium">
+                            Status <span class="text-red-600">*</span>
+                        </label>
                         <Multiselect v-model="newBusinessType.status" :options="['Running', 'Disabled']"
                             class="w-full" />
 
@@ -604,7 +594,6 @@ const addNewReferrer = (newTag: string) => {
                     </div>
                 </div>
 
-                <!-- Business Type Table -->
                 <table class="w-full border text-sm">
                     <thead>
                         <tr class="bg-gray-100">
@@ -631,11 +620,16 @@ const addNewReferrer = (newTag: string) => {
 
             <!-- COUNTRY MODAL -->
             <Dialog v-model:visible="showCountryModal" header="Countries" modal style="width:600px">
-
                 <div class="flex justify-center">
                     <div class="grid grid-cols-1 gap-3 mb-4 w-full max-w-sm">
+                        <label class="text-sm font-medium">
+                            Country Name <span class="text-red-600">*</span>
+                        </label>
                         <InputText v-model="newCountry.name" placeholder="Country Name" />
 
+                        <label class="text-sm font-medium">
+                            Status <span class="text-red-600">*</span>
+                        </label>
                         <Multiselect v-model="newCountry.status" :options="['Running', 'Disabled']" />
 
                         <Button label="Save" icon="pi pi-check" class="p-button-success" @click="submitCountry" />
@@ -668,16 +662,21 @@ const addNewReferrer = (newTag: string) => {
 
             <!-- AREA MODAL -->
             <Dialog v-model:visible="showAreaModal" header="Areas" modal style="width:600px">
-
-                <!-- AREA MODAL -->
                 <div class="grid grid-cols-1 gap-3 mb-4 w-full max-w-sm mx-auto">
-                    <!-- Country Select -->
+                    <label class="text-sm font-medium">
+                        Country <span class="text-red-600">*</span>
+                    </label>
                     <Multiselect v-model="newArea.country" :options="runningCountries" label="name" track-by="name"
                         placeholder="Select Country" />
 
-                    <!-- Area Name -->
+                    <label class="text-sm font-medium">
+                        Area Name <span class="text-red-600">*</span>
+                    </label>
                     <InputText v-model="newArea.name" placeholder="Area Name" class="w-full" />
 
+                    <label class="text-sm font-medium">
+                        Status <span class="text-red-600">*</span>
+                    </label>
                     <Multiselect v-model="newArea.status" :options="['Running', 'Disabled']" class="w-full" />
 
                     <Button label="Save" icon="pi pi-check" class="p-button-success w-full" @click="submitArea" />

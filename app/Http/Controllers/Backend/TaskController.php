@@ -65,17 +65,24 @@ class TaskController extends Controller
     public function staffTaskDecision(Request $request, $id)
     {
         $request->validate([
-            'decision' => 'required|in:Approved,Declined',
-            'note' => 'required_if:decision,Declined'
+            'decision' => 'required|in:Approved,Declined,Declined Trash',
+            'note' => 'required'
         ]);
 
         $task = Task::findOrFail($id);
 
-        // keep status = Staff
         $task->staff_decision = $request->decision;
 
         if ($request->decision === 'Declined') {
             $task->decline_note = $request->note;
+        }
+
+        if ($request->decision === 'Approved') {
+            $task->approve_note = $request->note;
+        }
+
+        if ($request->decision === 'Declined Trash') {
+            $task->declined_trash_note = $request->note;
         }
 
         $task->save();

@@ -25,6 +25,7 @@ const breadcrumbItems = [
 
 const page = usePage();
 const user = page.props.authUser;
+const isSubmitting = ref(false);
 
 // Detect if staff
 const isStaff = user?.role === "staff";
@@ -150,6 +151,8 @@ const submitForm = async () => {
         return;
     }
 
+    isSubmitting.value = true; // 🔥 start loading
+
     if (isStaff) {
         form.value.status = "Staff";
     }
@@ -202,6 +205,8 @@ const submitForm = async () => {
             detail: "Failed to save task.",
             life: 3000,
         });
+    } finally {
+        isSubmitting.value = false; // 🔥 end loading
     }
 };
 
@@ -375,8 +380,14 @@ const tableRows = computed(() =>
 
                             <!-- Submit -->
                             <div class="flex justify-center mt-6">
-                                <Button type="submit" :label="editingId ? 'Update Task' : 'Save Task'" icon="pi pi-save"
-                                    class="p-button-success w-1/2" />
+                                <Button
+                                    type="submit"
+                                    :label="editingId ? 'Updating Task...' : 'Submit Task'"
+                                    icon="pi pi-save"
+                                    class="p-button-success w-1/2"
+                                    :loading="isSubmitting"
+                                    :disabled="isSubmitting"
+                                />
                             </div>
                         </form>
                     </div>

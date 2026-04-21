@@ -70,4 +70,9 @@ class User extends Authenticatable
             $user->code = $code;
         });
     }
+
+    public function tasks()
+    {
+        return $this->hasMany(Task::class, 'created_by');
+    }
 }

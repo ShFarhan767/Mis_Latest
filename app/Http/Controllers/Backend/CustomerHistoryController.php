@@ -127,12 +127,58 @@ class CustomerHistoryController extends Controller
     // Fetch all history for a customer
     public function getHistory($customerId)
     {
+        $customer = Customer::findOrFail($customerId);
+
         $history = CustomerHistory::where('customer_id', $customerId)
                     ->with('staff')
                     ->orderBy('created_at', 'desc')
                     ->get();
 
-        return response()->json($history);
+        // Start with a "Customer Created" entry including actual customer data
+        $timeline = collect([
+            [
+                'id' => 0,
+                'customer_id' => $customer->id,
+                'staff_id' => null,
+                'note' => 'Customer created',
+                'old_data' => null,
+                'created_at' => $customer->created_at,
+                'updated_at' => $customer->created_at,
+                'staff' => null,
+                // ✅ include actual customer fields
+                'customer_name' => $customer->name,
+                'email' => $customer->email,
+                'phone' => $customer->numbers->pluck('full_number')->implode(', '),
+                'service_type' => $customer->service_type ?? [],
+            ]
+        ]);
+
+        // Transform history data
+        $historyTransformed = $history->map(function ($h) {
+            $oldData = $h->old_data ?? [];
+
+            // Convert 'service_type' to 'old_service_type'
+            if (isset($oldData['service_type'])) {
+                $oldData['old_service_type'] = $oldData['service_type'];
+                unset($oldData['service_type']);
+            }
+
+            return [
+                'id' => $h->id,
+                'customer_id' => $h->customer_id,
+                'staff_id' => $h->staff_id,
+                'note' => $h->note,
+                'old_data' => $oldData,
+                'created_at' => $h->created_at,
+                'updated_at' => $h->updated_at,
+                'staff' => $h->staff ? $h->staff->name : null,
+            ];
+        });
+
+        // Merge "Created" entry at the beginning
+        $timeline = $timeline->merge($historyTransformed);
+
+        return response()->json($timeline);
     }
 
     // Fetch only notes for Add Note modal

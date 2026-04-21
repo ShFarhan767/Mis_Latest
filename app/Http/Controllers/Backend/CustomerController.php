@@ -4,12 +4,15 @@ namespace App\Http\Controllers\Backend;
 
 use App\Models\Customer;
 use App\Models\ServiceType;
+use App\Models\User;
 use Illuminate\Http\Request;
 use App\Services\CustomerService;
 use App\Http\Controllers\Controller;
 use Illuminate\Support\Facades\Auth;
 use App\Models\CustomerAssignHistory;
 use App\Http\Requests\CustomerRequest;
+use App\Models\CustomerDemoNote;
+use Illuminate\Support\Facades\DB;
 
 class CustomerController extends Controller
 {
@@ -22,11 +25,36 @@ class CustomerController extends Controller
 
     public function index()
     {
-        $query = Customer::with(['numbers', 'assignedStaff']);
+        $query = Customer::with(['numbers', 'assignedStaff', 'demoPresenter'])
+            ->select('customers.*');
 
-        // STAFF → only his assigned customers
+        $userId = (int)auth()->id();
+        if ($userId) {
+            $query->addSelect(DB::raw("(
+                select count(*) from customer_demo_notes n
+                where n.customer_id = customers.id
+                and n.user_id <> {$userId}
+                and n.id > coalesce(
+                    (select last_read_note_id from customer_demo_note_reads r
+                     where r.customer_id = customers.id and r.user_id = {$userId}
+                     limit 1),
+                    0
+                )
+            ) as demo_notes_unread"));
+        }
+
         if (auth()->user()->role === 'staff') {
-            $query->where('assigned_staff_id', auth()->id());
+            // STAFF → assigned to them OR created by them
+            $query->where(function ($q) {
+                $q->where('assigned_staff_id', auth()->id())
+                ->orWhere('created_by', auth()->id());
+            });
+        }
+
+        if (auth()->user()->role === 'demo_presenter') {
+            // Demo presenter → only customers assigned to them for demo
+            $query->where('demo_presenter_id', auth()->id())
+                ->whereIn('staff_status', ['Need To Show Demo', 'Demo Done']);
         }
 
         // ADMIN → all customers (assigned + unassigned)
@@ -160,7 +188,11 @@ class CustomerController extends Controller
     // Update only staff_status
     public function updateStaffStatus(Request $request, $id)
     {
-        $request->validate(['staff_status' => 'required|string']);
+        $request->validate([
+            'staff_status' => 'required|string',
+            'demo_presenter_id' => 'nullable|integer',
+        ]);
+
         $customer = $this->service->repo->find($id);
 
         // Check permission
@@ -168,13 +200,94 @@ class CustomerController extends Controller
             return response()->json(['message' => 'Forbidden'], 403);
         }
 
-        $customer = $this->service->repo->update($id, [
-            'staff_status' => $request->staff_status
-        ], auth()->id());
+        $data = [
+            'staff_status' => $request->staff_status,
+        ];
+
+        if ($request->staff_status === 'Need To Show Demo') {
+            if (!$request->demo_presenter_id) {
+                return response()->json([
+                    'message' => 'Demo presenter is required when staff status is Need To Show Demo.'
+                ], 422);
+            }
+
+            $presenter = User::query()
+                ->where('id', $request->demo_presenter_id)
+                ->where('role', 'demo_presenter')
+                ->first();
+
+            if (!$presenter) {
+                return response()->json([
+                    'message' => 'Invalid demo presenter.'
+                ], 422);
+            }
+
+            $data['demo_presenter_id'] = $presenter->id;
+            $data['demo_status'] = 'Pending';
+            $data['demo_done_at'] = null;
+        } else {
+            // Clear demo presenter if moving away from demo status
+            $data['demo_presenter_id'] = null;
+            $data['demo_status'] = null;
+            $data['demo_done_at'] = null;
+        }
+
+        $customer = $this->service->repo->update($id, $data, auth()->id());
 
         return response()->json([
             'message' => 'Staff status updated successfully',
             'customer' => $customer
+        ]);
+    }
+
+    public function updateDemoStatus(Request $request, $id)
+    {
+        $data = $request->validate([
+            'demo_status' => 'required|in:Pending,Done',
+            'note' => 'nullable|string|max:5000',
+        ]);
+
+        $customer = $this->service->repo->find($id);
+
+        if ($customer->staff_status !== 'Need To Show Demo') {
+            return response()->json([
+                'message' => 'Demo status can be updated only when staff status is Need To Show Demo.'
+            ], 422);
+        }
+
+        $user = auth()->user();
+        if ($user->role === 'staff' && (int)$customer->assigned_staff_id !== (int)$user->id) {
+            return response()->json(['message' => 'Forbidden'], 403);
+        }
+        if ($user->role === 'demo_presenter' && (int)$customer->demo_presenter_id !== (int)$user->id) {
+            return response()->json(['message' => 'Forbidden'], 403);
+        }
+
+        if ($data['demo_status'] === 'Done' && empty(trim($data['note'] ?? ''))) {
+            return response()->json(['message' => 'Note is required when marking demo as Done.'], 422);
+        }
+
+        $update = [
+            'demo_status' => $data['demo_status'],
+            'demo_done_at' => $data['demo_status'] === 'Done' ? now() : null,
+        ];
+
+        // Keep staff_status in sync for demo presenter flow
+        $update['staff_status'] = $data['demo_status'] === 'Done' ? 'Demo Done' : 'Need To Show Demo';
+
+        $updated = $this->service->repo->update($customer->id, $update, auth()->id());
+
+        if (!empty(trim($data['note'] ?? ''))) {
+            CustomerDemoNote::create([
+                'customer_id' => $customer->id,
+                'user_id' => auth()->id(),
+                'message' => $data['note'],
+            ]);
+        }
+
+        return response()->json([
+            'message' => 'Demo status updated',
+            'customer' => $updated,
         ]);
     }
 

@@ -16,6 +16,8 @@ return new class extends Migration
             $table->string('country_name'); // store country name directly
             $table->string('area_name')->unique();
             $table->enum('status', ['Running', 'Disabled'])->default('Running');
+            $table->unsignedBigInteger('created_by');
+            $table->foreign('created_by')->references('id')->on('users')->onDelete('cascade');
             $table->timestamps();
         });
     }

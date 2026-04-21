@@ -22,12 +22,12 @@ const breadcrumbItems = [
     { title: "Task Assignment", href: "/task-assignment" },
 ];
 
-const statusOptions = ["New", "Assigned", "Pending", "Cancelled", "Reissue"];
+const statusOptions = ["Assigned", "Pending", "Cancelled", "Reissue"];
 
 const form = ref({
     employee: null,
     task: null,
-    status: "New",
+    status: "Assigned",
     reissue_comment: "",
     committed_hours: null,
     start_date: null,
@@ -102,7 +102,7 @@ const resetForm = () => {
     form.value = {
         employee: null,
         task: null,
-        status: "New",
+        status: "Assigned",
         reissue_comment: "",
         committed_hours: "",
         start_date: null,
@@ -132,7 +132,7 @@ const editEntry = async (entry) => {
 
     form.value.status = statusOptions.includes(entry.status)
         ? entry.status
-        : "New";
+        : "Assigned";
 
     form.value.reissue_comment = entry.reissue_comment || "";
     form.value.committed_hours = entry.committed_hours || "";

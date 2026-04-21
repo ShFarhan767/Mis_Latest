@@ -11,6 +11,12 @@ import { useConfirm } from "primevue/useconfirm";
 import axios from "axios";
 import Multiselect from "vue-multiselect";
 import DataTable from "@/Components/DataTable.vue";
+import DesignationEntryModal from "@/components/DesignationEntryModal.vue"
+
+const props = defineProps({
+    userRole: String,
+    userId: Number
+});
 
 const toast = useToast();
 const confirm = useConfirm();
@@ -39,7 +45,6 @@ const statusOptions = [
 ];
 
 const entries = ref<any[]>([]);
-const designations = ref<any[]>([]); // store API fetched designations
 const editingId = ref<number | null>(null);
 const editingStatusId = ref<number | null>(null);
 
@@ -58,6 +63,15 @@ const fetchEntries = async () => {
             life: 3000,
         });
     }
+};
+
+const designations = ref<any[]>([]); // store API fetched designations
+const showDesignationModal = ref(false);
+
+const handleDesignationCreated = (newData: any) => {
+    const option = { label: newData.designation_name, value: newData.id };
+    designations.value.push(option);
+    form.value.designation = option;
 };
 
 // ============================
@@ -255,7 +269,12 @@ const tableRows = computed(() =>
 
                             <!-- Designation -->
                             <div>
-                                <label class="font-semibold block mb-2 text-black">Designation</label>
+                                <div class="flex justify-between items-center mb-1">
+                                    <label class="font-medium">Designation</label>
+                                    <Button v-if="props.userRole === 'admin'" icon="pi pi-plus"
+                                        class="p-button-rounded p-button-sm p-button-success"
+                                        @click="showDesignationModal = true" />
+                                </div>
                                 <Multiselect v-model="form.designation" :options="designations" :multiple="false"
                                     :searchable="true" placeholder="Select Designation" label="label" track-by="value"
                                     class="w-full" />
@@ -304,6 +323,8 @@ const tableRows = computed(() =>
             </DataTable>
         </div>
     </AppLayout>
+
+    <DesignationEntryModal v-model:visible="showDesignationModal" @created="handleDesignationCreated" />
 </template>
 
 <style>

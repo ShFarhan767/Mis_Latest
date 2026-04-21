@@ -17,6 +17,7 @@ import UserMenuContent from './UserMenuContent.vue';
 
 const page = usePage();
 const user = page.props.auth.user;
+console.log("User in NavUser.vue:", user.name);
 const { isMobile, state } = useSidebar();
 </script>
 
@@ -27,14 +28,14 @@ const { isMobile, state } = useSidebar();
                 <DropdownMenuTrigger as-child>
                     <SidebarMenuButton
                         size="lg"
-                        class="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
+                        class="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground capitalize"
                         data-test="sidebar-menu-button"
                     >
                         <UserInfo :user="user" />
                     </SidebarMenuButton>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent
-                    class="w-(--reka-dropdown-menu-trigger-width) min-w-56 rounded-lg"
+                    class="w-(--reka-dropdown-menu-trigger-width) min-w-70 rounded-lg"
                     :side="
                         isMobile
                             ? 'bottom'
@@ -45,7 +46,8 @@ const { isMobile, state } = useSidebar();
                     align="end"
                     :side-offset="4"
                 >
-                    <UserMenuContent :user="user" />
+
+                 <UserMenuContent :user="user" class="w-full right-20 relative"/>
                 </DropdownMenuContent>
             </DropdownMenu>
         </SidebarMenuItem>

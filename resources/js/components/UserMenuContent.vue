@@ -28,8 +28,7 @@ defineProps<Props>();
         <div class="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
             <SquareUserRound class="w-8 h-8" />
             <div class="text-sm">
-                <p class="text-sm">{{ user.name }}</p>
-                <p class="text-sm">{{ user.email }}</p>
+                <p class="text-sm capitalize">{{ user.name }}</p>
             </div>
         </div>
     </DropdownMenuLabel>

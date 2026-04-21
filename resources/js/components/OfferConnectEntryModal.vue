@@ -4,6 +4,7 @@ import Dialog from 'primevue/dialog';
 import InputText from 'primevue/inputtext';
 import Button from 'primevue/button';
 import DataTable from '@/Components/DataTable.vue';
+import Dropdown from 'primevue/dropdown';
 import Toast from 'primevue/toast';
 import ConfirmDialog from 'primevue/confirmdialog';
 import { useToast } from 'primevue/usetoast';

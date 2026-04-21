@@ -43,6 +43,12 @@ class StaffService
 
     public function delete($id)
     {
+        $staff = $this->repository->find($id);
+
+        if ($staff->tasks()->exists()) {
+            abort(422, 'Cannot delete staff. Related tasks exist.');
+        }
+
         return $this->repository->delete($id);
     }
 }

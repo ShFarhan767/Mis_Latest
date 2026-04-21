@@ -6,10 +6,14 @@ use App\Http\Controllers\Backend\ClientController;
 use App\Http\Controllers\Backend\ClientNoteController;
 use App\Http\Controllers\Backend\CountryController;
 use App\Http\Controllers\Backend\CustomerController;
+use App\Http\Controllers\Backend\CustomerDemoNoteController;
 use App\Http\Controllers\Backend\CustomerHistoryController;
 use App\Http\Controllers\Backend\DesignationController;
+use App\Http\Controllers\Backend\DemoPresenterController;
+use App\Http\Controllers\Backend\EmployeeController;
 use App\Http\Controllers\Backend\InterestLevelController;
 use App\Http\Controllers\Backend\LeadSourceController;
+use App\Http\Controllers\Backend\LogoController;
 use App\Http\Controllers\Backend\OfferConnectController;
 use App\Http\Controllers\Backend\ServiceTypeController;
 use App\Http\Controllers\Backend\ShopTypeController;
@@ -24,6 +28,24 @@ Route::prefix('/api')->group(function () {
 
     Route::middleware('auth:sanctum')->get('/current-user', function (Request $request) {
         return $request->user();
+    });
+
+    // Employee Create API Routes
+    Route::prefix('/employees')->group(function () {
+        Route::get('/', [EmployeeController::class, 'index']);
+        Route::post('/', [EmployeeController::class, 'store']);
+        Route::get('/{employee}', [EmployeeController::class, 'show']);
+        Route::put('/{employee}', [EmployeeController::class, 'update']);
+        Route::delete('/{employee}', [EmployeeController::class, 'destroy']);
+    });
+
+    // Demo Presenter Create API Routes
+    Route::prefix('/demo-presenters')->group(function () {
+        Route::get('/', [DemoPresenterController::class, 'index']);
+        Route::post('/', [DemoPresenterController::class, 'store']);
+        Route::get('/{presenter}', [DemoPresenterController::class, 'show']);
+        Route::put('/{presenter}', [DemoPresenterController::class, 'update']);
+        Route::delete('/{presenter}', [DemoPresenterController::class, 'destroy']);
     });
 
     Route::get('/task-assignments', [TaskAssignmentController::class, 'index']);
@@ -127,6 +149,14 @@ Route::prefix('/api')->group(function () {
         Route::put('/customer-history/{id}/update-note', [CustomerHistoryController::class, 'updateNote']);
         Route::post('/customers/{customer}/add-note', [CustomerHistoryController::class, 'addNote']);
 
+        // Demo presenter notes (chat)
+        Route::get('/customers/{customer}/demo-notes', [CustomerDemoNoteController::class, 'index']);
+        Route::post('/customers/{customer}/demo-notes', [CustomerDemoNoteController::class, 'store']);
+        Route::put('/customers/{customer}/demo-notes/mark-read', [CustomerDemoNoteController::class, 'markRead']);
+
+        // Demo status update (for demo presenter + staff/admin)
+        Route::put('/customers/{id}/demo-status', [CustomerController::class, 'updateDemoStatus']);
+
 
         Route::get('/tasks/{task}/notes', [TaskNoteController::class, 'index']);
         Route::post('/tasks/{task}/notes', [TaskNoteController::class, 'store']);
@@ -134,4 +164,9 @@ Route::prefix('/api')->group(function () {
 
         Route::post('/tasks/{id}/staff-decision', [TaskController::class, 'staffTaskDecision']);
     });
+
+    // Website Configuration Routes
+    Route::apiResource('logos', LogoController::class);
 });
+
+

@@ -11,6 +11,12 @@ import { useConfirm } from "primevue/useconfirm";
 import axios from "axios";
 import Multiselect from "vue-multiselect";
 import DataTable from "@/Components/DataTable.vue";
+import DesignationEntryModal from "@/components/DesignationEntryModal.vue"
+
+const props = defineProps({
+    userRole: String,
+    userId: Number
+});
 
 const toast = useToast();
 const confirm = useConfirm();
@@ -27,7 +33,7 @@ const form = ref({
     name: "",
     mobile: "",
     email: "",
-    designation: [] as number[],
+    designation: null as any, // ✅ fix
     password: "",
     status: "Running",
 });
@@ -55,6 +61,13 @@ const fetchEntries = async () => {
 };
 
 const designations = ref<any[]>([]);
+const showDesignationModal = ref(false);
+
+const handleDesignationCreated = (newData: any) => {
+    const option = { label: newData.designation_name, value: newData.id };
+    designations.value.push(option);
+    form.value.designation = option;
+};
 
 const fetchDesignations = async () => {
     try {
@@ -248,6 +261,7 @@ const tableRows = computed(() =>
         plain_password: entry.plain_password,
         designation: entry.designation,
         status: entry.status,
+        can_delete: entry.can_delete
     }))
 );
 </script>
@@ -272,7 +286,6 @@ const tableRows = computed(() =>
                         style="background-image: url('/images/form_bg/form_bg.jpg'); background-size: cover;">
                         <form @submit.prevent="submitForm"
                             class="space-y-4 bg-white dark:bg-gray-900 p-6 rounded-xl shadow-lg w-1/2">
-
                             <div>
                                 <label class="font-semibold block mb-2 text-black">Name</label>
                                 <input v-model="form.name" type="text" class="w-full border rounded-lg p-2" />
@@ -289,7 +302,13 @@ const tableRows = computed(() =>
                             </div>
 
                             <div>
-                                <label class="font-semibold block mb-2 text-black">Designation</label>
+                                <div class="flex justify-between items-center mb-1">
+                                    <label class="font-medium">Designation</label>
+                                    <Button v-if="props.userRole === 'admin'" icon="pi pi-plus"
+                                        class="p-button-rounded p-button-sm p-button-success"
+                                        @click="showDesignationModal = true" />
+                                </div>
+
                                 <Multiselect v-model="form.designation" :options="designations" :multiple="false" :searchable="true"
                                     placeholder="Select Designation" label="label" track-by="value" class="w-full" />
                             </div>
@@ -328,6 +347,8 @@ const tableRows = computed(() =>
             </DataTable>
         </div>
     </AppLayout>
+
+    <DesignationEntryModal v-model:visible="showDesignationModal" @created="handleDesignationCreated" />
 </template>
 
 <style>

@@ -236,7 +236,7 @@ const rightNavItems: NavItem[] = [
                             </template>
                         </div>
                     </div>
-                    
+
 
                     <DropdownMenu>
                         <DropdownMenuTrigger :as-child="true">
@@ -261,7 +261,7 @@ const rightNavItems: NavItem[] = [
                                 </Avatar>
                             </Button>
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" class="w-56">
+                        <DropdownMenuContent align="end" class="w-70">
                             <UserMenuContent :user="auth.user" />
                         </DropdownMenuContent>
                     </DropdownMenu>

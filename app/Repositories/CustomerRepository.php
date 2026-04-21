@@ -6,6 +6,15 @@ use App\Models\Customer;
 
 class CustomerRepository
 {
+    private function baseWith(): array
+    {
+        return [
+            'numbers',
+            'assignedStaff:id,name,designation',
+            'demoPresenter:id,name,mobile',
+        ];
+    }
+
     public function create(array $data)
     {
         return Customer::create($data);
@@ -13,7 +22,7 @@ class CustomerRepository
 
     public function find($id)
     {
-        return Customer::with('numbers')->findOrFail($id);
+        return Customer::with($this->baseWith())->findOrFail($id);
     }
 
     public function update($id, array $data, $staffId = null)
@@ -40,7 +49,7 @@ class CustomerRepository
             ]);
         }
 
-        return $customer->load('numbers');
+        return $customer->load($this->baseWith());
     }
 
     public function delete($id)
@@ -51,9 +60,6 @@ class CustomerRepository
 
     public function all()
     {
-        return Customer::with([
-            'numbers',
-            'assignedStaff:id,name,designation' // ✅ IMPORTANT
-        ])->latest()->get();
+        return Customer::with($this->baseWith())->latest()->get();
     }
 }

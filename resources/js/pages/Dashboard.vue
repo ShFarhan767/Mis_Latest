@@ -13,6 +13,7 @@ import InputText from 'primevue/inputtext';
 import Textarea from "primevue/textarea";
 import Editor from "primevue/editor";
 import Multiselect from "vue-multiselect";
+import DemoPresenterDashboard from "@/components/DemoPresenterDashboard.vue";
 
 const breadcrumbItems = [
     { title: "Dashboard", href: "/" },
@@ -20,11 +21,8 @@ const breadcrumbItems = [
 
 const props = defineProps({
     userRole: String,
-    userId: Number
+    userId: Number,
 });
-
-console.log("Dashboard User Role:", props.userRole);
-console.log("Dashboard User ID:", props.userId);
 
 const toast = useToast();
 const selectedStatus = ref<{ [key: string]: string | null }>({});
@@ -33,7 +31,7 @@ const originalTasks = ref<any[]>([]); // ← backup
 const activeTab = ref("");
 
 onMounted(() => {
-    activeTab.value = props.userRole === "staff" ? "All" : "Running";
+    activeTab.value = props.userRole === "staff" ? "All" : "All";
 });
 
 //Dialogs
@@ -68,16 +66,25 @@ const employeeOptions = computed(() =>
 );
 
 // 🔹 Refs for filters
+const shopOptions = ref<any[]>([]);
 const selectedEmployee = ref(null);
 const selectedShop = ref(null);
+const selectedStatusFilter = ref(null);
 
-// 🔹 Options for shops (populate dynamically)
-const shopOptions = ref([]);
+const statusOptions = [
+    { label: "Running", value: "Working" },
+    { label: "Pending", value: "Assigned" },
+    { label: "New", value: "New" },
+    { label: "Reissue", value: "Reissue" },
+    { label: "Staff Status", value: "Staff" },
+];
 
 // 🔹 Reset both filters
-const resetFilters = () => {
-    selectedEmployee.value = null;
-    selectedShop.value = null;
+const resetAllFilters = () => {
+  searchQuery.value = "";
+  selectedEmployee.value = null;
+  selectedShop.value = null;
+  selectedStatusFilter.value = null;
 };
 
 // Edit Task Dialog
@@ -94,9 +101,7 @@ const editForm = ref({
 
 // const editSelectedShop = ref(null);
 const editImagePreview = ref(null);
-
 const editingId = ref(null);
-
 
 const editEntry = (task) => {
     const entry = task.task;
@@ -109,22 +114,6 @@ const editEntry = (task) => {
     editForm.value.details = entry.details;
     editForm.value.start_date = entry.start_date;
     editForm.value.status = entry.status;
-
-    // Set shop values
-    // editForm.value.shop_id = entry.shop_id;
-    // editForm.value.shop_name = entry.shop_name;
-
-    // Ensure Multiselect shows the shop properly
-    // if (entry.shop_id) {
-    //     const shopObj = { id: entry.shop_id, name: entry.shop_name };
-    //     editSelectedShop.value = shopObj;
-    //     // Add to clientOptions so Multiselect can recognize it
-    //     clientOptions.value = [shopObj];
-    // } else {
-    //     editSelectedShop.value = null;
-    //     clientOptions.value = [];
-    // }
-
     // Image preview
     editImagePreview.value = entry.image_url || (entry.image_path ? `/${entry.image_path}` : null);
 };
@@ -142,18 +131,8 @@ const handleEditImage = (e) => {
     reader.readAsDataURL(file);
 };
 
-
 const submitEdit = async () => {
     const fd = new FormData();
-
-    // Send shop_id only if selected
-    // if (editSelectedShop.value) {
-    //     fd.append("shop_id", editSelectedShop.value.id);
-    //     fd.append("shop_name", editSelectedShop.value.name);
-    // } else if (editForm.value.status !== "Future") {
-    //     fd.append("shop_id", "");
-    //     fd.append("shop_name", "");
-    // }
 
     fd.append("title", editForm.value.title);
     fd.append("details", editForm.value.details);
@@ -262,7 +241,6 @@ const handleClientSearch = async (text: string) => {
     }
 
     showDashboard.value = false;
-
     try {
         const res = await axios.get(`/api/clients/search?query=${encodeURIComponent(searchKey.value)}`);
 
@@ -337,6 +315,15 @@ const startRunningTimer = () => {
 // Stop global timer when component unmounts
 onUnmounted(() => clearInterval(timerInterval));
 
+const formatDate = (dateStr: string) => {
+    const date = new Date(dateStr);
+    return date.toLocaleDateString('en-US', {
+        day: 'numeric',
+        month: 'short', // Mar, Apr, etc.
+        year: 'numeric'
+    });
+}
+
 // Format seconds → "1h 42m 5s" or "2m 5s"
 const formatTime = (seconds: number) => {
     const h = Math.floor(seconds / 3600);
@@ -375,6 +362,12 @@ const fetchNewTasks = async () => {
         allTasks.value.push(
             ...newOrFuture.map((t: any) => ({
                 id: t.id,
+                staff_decision: t.staff_decision,   // ✅ ADD THIS
+                decline_note: t.decline_note,
+                approve_note: t.approve_note,
+                declined_trash_note: t.declined_trash_note,
+                created_at: t.created_at,
+                created_by: t.created_by,
                 task: {
                     id: t.id,
                     title: t.title,
@@ -386,8 +379,6 @@ const fetchNewTasks = async () => {
                 },
                 start_time: t.start_time ?? null,
                 status: t.status,
-                created_by: t.created_by,
-                created_at: t.created_at,
                 committed_hours: t.committed_hours ?? null,
                 employee: t.employee ?? null,
             }))
@@ -430,8 +421,11 @@ const fetchStaffTasks = async () => {
                 id: t.id,
                 status: t.status,
                 staff_decision: t.staff_decision,   // ✅ ADD THIS
-                decline_note: t.decline_note, 
-
+                decline_note: t.decline_note,
+                approve_note: t.approve_note,
+                declined_trash_note: t.declined_trash_note,
+                created_at: t.created_at,
+                created_by: t.created_by,
                 task: {
                     id: t.id,
                     title: t.title,
@@ -517,8 +511,17 @@ const allStaffTasks = computed(() =>
     )
 );
 
+const staffDeclinedTasks = computed(() =>
+    allTasks.value.filter(t =>
+        t.staff_decision === "Declined" || t.staff_decision === "Declined Trash"
+    )
+);
+
 const StaffTasks = computed(() =>
-    allTasks.value.filter(t => t.status === "Staff")
+    allTasks.value.filter(t =>
+        t.status === "Staff" && // Only Staff status tasks
+        (t.staff_decision === "Pending" || t.staff_decision === "Approved")
+    )
 );
 
 const todayCompleteTasks = computed(() => {
@@ -651,6 +654,63 @@ const filteredTasks = (tasks, status?) => {
     return filtered;
 };
 
+const adminAllFilteredTasks = computed(() => {
+    let tasks = [...allTasks.value];
+
+    if (activeTab.value === "All" && props.userRole === "admin") {
+        tasks = tasks.filter(t => {
+            // Include normal tasks
+            const normalStatuses = ["Working", "Pending", "Assigned", "New", "Reissue"];
+
+            if (normalStatuses.includes(t.status)) return true;
+
+            // Include Staff tasks only if Pending or Approved
+            if (t.status === "Staff" && (t.staff_decision === "Pending" || t.staff_decision === "Approved")) return true;
+
+            // Exclude everything else
+            return false;
+        });
+    }
+
+    // 🔹 TEXT SEARCH (searchKey)
+    if (searchKey.value.trim()) {
+        const key = searchKey.value.toLowerCase().trim();
+        tasks = tasks.filter((t: any) => {
+            const task = t.task || t;
+            return (
+                task.title?.toLowerCase().includes(key) ||
+                task.details?.toLowerCase().includes(key) ||
+                task.shop_name?.toLowerCase().includes(key) ||
+                task.client_name?.toLowerCase().includes(key) ||
+                task.phone?.toLowerCase().includes(key)
+            );
+        });
+    }
+
+    // 🔹 EMPLOYEE FILTER
+    if (selectedEmployee.value) {
+        tasks = tasks.filter(t => {
+            const empId = t.employee?.id ?? t.task?.employee?.id;
+            return empId === selectedEmployee.value.id;
+        });
+    }
+
+    // 🔹 SHOP FILTER
+    if (selectedShop.value) {
+        tasks = tasks.filter(t => {
+            const shopName = t.task?.shop_name ?? t.shop_name ?? '';
+            return shopName === selectedShop.value.shop_name;
+        });
+    }
+
+    // 🔹 STATUS FILTER
+    if (selectedStatusFilter.value) {
+        tasks = tasks.filter(t => t.status === selectedStatusFilter.value.value);
+    }
+
+    return tasks;
+});
+
 // 🔹 Compute shops based on current tab tasks
 const shopOptionsByTab = computed(() => {
     // Get tasks for active tab
@@ -683,6 +743,9 @@ const shopOptionsByTab = computed(() => {
             break;
         case 'Staff':
             tasksForTab = StaffTasks.value;
+            break;
+        case 'Declined Trash':
+            tasksForTab = staffDeclinedTasks.value;
             break;
         default:
             tasksForTab = allTasks.value;
@@ -817,20 +880,20 @@ const openAssign = (task: any) => {
     if (employees.value.length === 0) fetchEmployees();
 };
 
-const formatDate = (date: string | Date | null) => {
-    if (!date) return null;
+// const formatDate = (date: string | Date | null) => {
+//     if (!date) return null;
 
-    // Convert string to Date if necessary
-    const d = date instanceof Date ? date : new Date(date);
+//     // Convert string to Date if necessary
+//     const d = date instanceof Date ? date : new Date(date);
 
-    if (isNaN(d.getTime())) return null; // invalid date check
+//     if (isNaN(d.getTime())) return null; // invalid date check
 
-    const year = d.getFullYear();
-    const month = (d.getMonth() + 1).toString().padStart(2, '0');
-    const day = d.getDate().toString().padStart(2, '0');
+//     const year = d.getFullYear();
+//     const month = (d.getMonth() + 1).toString().padStart(2, '0');
+//     const day = d.getDate().toString().padStart(2, '0');
 
-    return `${year}-${month}-${day}`;
-};
+//     return `${year}-${month}-${day}`;
+// };
 
 const formatDateBD = (date) => {
     if (!date) return null;
@@ -846,6 +909,15 @@ const formatDateBD = (date) => {
         hour12: true
     });
 };
+
+const toMysqlDate = (v: string | Date) => {
+  const d = typeof v === 'string' ? new Date(v) : v
+  const yyyy = d.getFullYear()
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const dd = String(d.getDate()).padStart(2, '0')
+  return `${yyyy}-${mm}-${dd}`
+}
+
 
 const submitAssign = async () => {
     if (!assignedEmployee.value || !committedHours.value || !startDate.value || !endDate.value) {
@@ -863,8 +935,8 @@ const submitAssign = async () => {
             task_id: selectedNewTask.value.id,
             employee_id: assignedEmployee.value.id,
             committed_hours: committedHours.value,
-            start_date: formatDate(startDate.value),
-            end_date: formatDate(endDate.value),
+            start_date: toMysqlDate(startDate.value),
+            end_date: toMysqlDate(endDate.value),
             status: 'Assigned',
         });
 
@@ -974,19 +1046,61 @@ const stopWork = async (task: any) => {
 
 const workHistory = ref<any[]>([]);
 const showWorkHistoryDialog = ref(false);
+const workHistoryMessage = ref<string>("");
 
 const openWorkHistory = async (task: any) => {
-    if (task.sessions && task.sessions.length > 0) {
-        workHistory.value = task.sessions;
+    workHistoryMessage.value = "";
+
+    const existingSessions = Array.isArray(task.sessions)
+        ? task.sessions
+        : Array.isArray(task.work_sessions)
+            ? task.work_sessions
+            : Array.isArray(task.task?.work_sessions)
+                ? task.task.work_sessions
+                : Array.isArray(task.task?.sessions)
+                    ? task.task.sessions
+                    : [];
+
+    if (existingSessions.length > 0) {
+        workHistory.value = existingSessions;
+        showWorkHistoryDialog.value = true;
+        return;
+    }
+
+    // NOTE: API expects TaskAssignment id, not Task id
+    const assignmentId =
+        task.task_assignment_id ??
+        task.assignment_id ??
+        task.task_assignment?.id ??
+        task.task?.task_assignments?.[0]?.id ??
+        task.task_assignments?.[0]?.id ??
+        task.id ??
+        null;
+
+    if (!assignmentId) {
+        workHistory.value = [];
+        workHistoryMessage.value = "No working history.";
         showWorkHistoryDialog.value = true;
         return;
     }
 
     try {
-        const res = await axios.get(`/api/task-assignments/${task.task.id}/work-history`);
-        workHistory.value = res.data;
+        const res = await axios.get(`/api/task-assignments/${assignmentId}/work-history`);
+        const data = (res as any).data?.data ?? (res as any).data;
+        workHistory.value = Array.isArray(data) ? data : [];
+        if (workHistory.value.length === 0) workHistoryMessage.value = "No working history.";
         showWorkHistoryDialog.value = true;
     } catch (err: any) {
+        const status = err?.response?.status;
+
+        // If there is no TaskAssignment or history, show empty dialog instead of an error toast
+        if (status === 404) {
+            workHistory.value = [];
+            workHistoryMessage.value = "No working history.";
+            showWorkHistoryDialog.value = true;
+            return;
+        }
+
         toast.add({
             severity: "error",
             summary: "Error",
@@ -1079,6 +1193,8 @@ const tabs = computed(() => {
         // Staff only sees All, Cancelled, Complete
         return [
             { key: "All", label: "All Tasks", color: "blue" },
+            { key: "Declined", label: "Declined Tasks", color: "red" }, // ✅ NEW
+            { key: "DeclinedTrash", label: "Declined Trash", color: "gray" },
             { key: "Reissue", label: "Reissue Tasks", color: "pink" },
             { key: "Cancelled", label: "Cancelled Tasks", color: "red" },
             { key: "Complete", label: "Complete Tasks", color: "green" },
@@ -1096,7 +1212,10 @@ const tabs = computed(() => {
     ];
 
     if (props.userRole === 'admin') {
+        baseTabs.unshift({ key: "All", label: "All Tasks", color: "gray" }); // ← new tab
         baseTabs.splice(4, 0, { key: "New", label: "New Tasks", color: "purple" });
+        baseTabs.splice(5, 0, { key: "Declined", label: "Declined Tasks", color: "red" });
+        baseTabs.splice(6, 0, { key: "DeclinedTrash", label: "Declined Trash", color: "gray" });
     }
 
     baseTabs.push({ key: "Reissue", label: "Reissue Tasks", color: "pink" });
@@ -1174,6 +1293,18 @@ const tasksForActiveTab = computed(() => {
                         t.task?.status === "Staff" ||
                         t.employee?.id === props.userId
                 );
+            case 'Declined': // ✅ NEW
+                return baseTasks.filter(
+                    t =>
+                        t.employee?.id === props.userId &&
+                        t.staff_decision === 'Declined'
+                );
+            case 'DeclinedTrash':
+                return baseTasks.filter(
+                    t =>
+                        t.employee?.id === props.userId &&
+                        t.staff_decision === 'Declined Trash'
+                );
             case 'Cancelled':
                 return baseTasks.filter(
                     t => t.employee?.id === props.userId && t.status === 'Cancelled'
@@ -1187,12 +1318,23 @@ const tasksForActiveTab = computed(() => {
                     t => t.employee?.id === props.userId && t.status === 'Reissue'
                 );
             default:
-                return baseTasks.filter(t => t.status === "Staff");
+                return baseTasks.filter(t =>
+                    t.status === "Staff" &&
+                    !["Declined", "Declined Trash"].includes(t.staff_decision)
+                );
         }
     }
 
     // Admin & Employee
     switch (activeTab.value) {
+       case 'All':
+            if (props.userRole === 'admin') {
+                // ❌ Exclude Complete & Approved from All tab
+                return adminAllFilteredTasks.value.filter(
+                    t => !['Complete', 'Approved'].includes(t.status)
+                );
+            }
+            return baseTasks;
         case 'Running':
             return baseTasks.filter(t => t.status === 'Working');
         case 'Pending':
@@ -1223,17 +1365,17 @@ const tasksForActiveTab = computed(() => {
 // Status color classes
 function statusClasses(status: string) {
     switch (status) {
-        case 'Running': return 'bg-green-100 text-green-800';
-        case "Working": return "bg-yellow-100 text-yellow-700 border border-yellow-300";
-        case 'Pending': return 'bg-yellow-100 text-yellow-800';
-        case 'Complete': return 'bg-blue-100 text-blue-800';
-        case 'Cancelled': return 'bg-red-100 text-red-800';
-        case 'Reissue': return 'bg-pink-100 text-pink-800';
-        case 'New': return 'bg-purple-100 text-purple-800';
-        case 'Future': return 'bg-indigo-100 text-indigo-800';
-        case 'Staff': return 'bg-orange-100 text-orange-800';
-        case 'Approved': return 'bg-green-200 text-green-900';
-        default: return 'bg-gray-100 text-gray-800';
+        case 'Working': return 'border-yellow-500 bg-yellow-50 text-yellow-700';
+        case 'Pending': return 'border-yellow-500 bg-yellow-50 text-yellow-700';
+        case 'Assigned': return 'border-yellow-500 bg-yellow-50 text-yellow-700';
+        case 'Complete': return 'border-blue-500 bg-blue-50 text-blue-700';
+        case 'Approved': return 'border-green-500 bg-green-50 text-green-700';
+        case 'Cancelled': return 'border-red-500 bg-red-50 text-red-700';
+        case 'Reissue': return 'border-pink-500 bg-pink-50 text-pink-700';
+        case 'New': return 'border-purple-500 bg-purple-50 text-purple-700';
+        case 'Future': return 'border-indigo-500 bg-indigo-50 text-indigo-700';
+        case 'Staff': return 'border-orange-500 bg-orange-50 text-orange-700';
+        default: return 'border-gray-400 bg-gray-50 text-gray-700';
     }
 }
 
@@ -1248,6 +1390,11 @@ const getWorkingBadge = (task) => {
 };
 
 const getTaskCount = (tabKey: string) => {
+    // 🔥 If searching AND All tab → show filtered (searched) count
+    if (tabKey === "All" && searchKey.value.trim()) {
+        return searchedTasks.value.length;
+    }
+
     if (!allTasks.value || !Array.isArray(allTasks.value)) return 0;
 
     return allTasks.value.filter(t => {
@@ -1255,26 +1402,49 @@ const getTaskCount = (tabKey: string) => {
 
         switch (tabKey) {
             case "All":
-                return true; // All tasks
+                // ✅ Include everything except Complete/Approved and Declined Staff
+                if (["Complete", "Approved"].includes(status)) return false;
+                // Exclude Staff tasks with declined decisions
+                if (status === "Staff" && ["Declined", "Declined Trash"].includes(t.staff_decision)) return false;
+
+                return true;
+
+            case "Declined":
+                return t.staff_decision === "Declined";
+
+            case "DeclinedTrash":
+                return t.staff_decision === "Declined Trash";
+
             case "Running":
                 return status === "Working";
+
             case "Pending":
                 return ["Pending", "Assigned"].includes(status);
+
             case "Cancelled":
                 return status === "Cancelled";
+
             case "Complete":
                 return ["Complete", "Approved"].includes(status);
+
             case "TodayComplete":
                 const today = new Date().toISOString().split('T')[0];
-                return ["Complete", "Approved"].includes(status) && t.updated_at?.split('T')[0] === today;
+                return ["Complete", "Approved"].includes(status)
+                    && t.updated_at?.split('T')[0] === today;
+
             case "New":
                 return status === "New";
+
             case "Reissue":
                 return status === "Reissue";
+
             case "Future":
                 return status === "Future";
+
             case "Staff":
-                return ["Staff"].includes(status);
+                return status === "Staff" &&
+                    !["Declined", "Declined Trash"].includes(t.staff_decision);
+
             default:
                 return false;
         }
@@ -1497,8 +1667,8 @@ const fetchUnreadNotes = async () => {
         if (!Array.isArray(StaffTasks.value)) return; // safety check
 
         for (const task of StaffTasks.value) {
-        const { data } = await axios.get(`/api/tasks/${task.task.id}/notes`);
-        unreadNotes.value[task.task.id] = data.unreadCount || 0;
+            const { data } = await axios.get(`/api/tasks/${task.task.id}/notes`);
+            unreadNotes.value[task.task.id] = data.unreadCount || 0;
         }
     } catch (err) {
         console.error("Failed to fetch unread notes", err);
@@ -1552,27 +1722,53 @@ const showDeclineModal = ref(false)
 const declineNote = ref('')
 const selectedTaskId = ref(null)
 
-const approveStaffTask = async (taskId) => {
-    try {
-        await axios.post(`/api/tasks/${taskId}/staff-decision`, {
-            decision: 'Approved'
-        });
+const showDeclinedTrashModal = ref(false)
+const declinedTrashNote = ref('')
 
-        // update UI locally (optional)
-        const task = StaffTasks.value.find(t => t.task.id === taskId);
-        if (task) {
-            task.task.staff_decision = 'Approved';
-        }
+const showApproveModal = ref(false)
+const approveNote = ref('')
 
-    } catch (error) {
-        console.error("Approve failed:", error);
-    }
-};
+const openApproveModal = (task) => {
+    selectedTaskId.value = task.id
+    showApproveModal.value = true
+}
+
+const openDeclinedTrashModal = (task) => {
+    selectedTaskId.value = task.id
+    showDeclinedTrashModal.value = true
+}
 
 const openDeclineModal = (task) => {
-  selectedTaskId.value = task.id
-  showDeclineModal.value = true
+    selectedTaskId.value = task.id
+    showDeclineModal.value = true
 }
+
+const submitApprove = async () => {
+    if (!approveNote.value) return alert("Approve note required");
+
+    await axios.post(`/api/tasks/${selectedTaskId.value}/staff-decision`, {
+        decision: 'Approved',
+        note: approveNote.value
+    });
+
+    const task = StaffTasks.value.find(t => t.task.id === selectedTaskId.value);
+    if (task) {
+        task.task.staff_decision = 'Approved';
+        task.task.approve_note = approveNote.value;
+    }
+
+    toast.add({
+        severity: "success",
+        summary: "Approved",
+        detail: "Staff status decision approved successfully",
+        life: 3000
+    });
+
+    fetchStaffTasks(); // refresh tasks to reflect changes
+
+    showApproveModal.value = false;
+    approveNote.value = '';
+};
 
 const submitDecline = async () => {
     if (!declineNote.value) return alert("Decline note required");
@@ -1588,33 +1784,82 @@ const submitDecline = async () => {
         task.task.decline_note = declineNote.value;
     }
 
+    toast.add({
+        severity: "warn",
+        summary: "Declined",
+        detail: "Staff status decision declined successfully",
+        life: 3000
+    });
+
     showDeclineModal.value = false;
     declineNote.value = '';
+
+    fetchStaffTasks(); // refresh tasks to reflect changes
+
+    activeTab.value = "Declined"; // ✅ move tab
 };
+
+const submitDeclinedTrash = async () => {
+    if (!declinedTrashNote.value) return alert("Trash note required");
+
+    await axios.post(`/api/tasks/${selectedTaskId.value}/staff-decision`, {
+        decision: 'Declined Trash',
+        note: declinedTrashNote.value
+    });
+
+    const task = StaffTasks.value.find(t => t.task.id === selectedTaskId.value);
+    if (task) {
+        task.task.staff_decision = 'Declined Trash';
+        task.task.declined_trash_note = declinedTrashNote.value;
+    }
+
+    toast.add({
+        severity: "error",
+        summary: "Declined Trash",
+        detail: "Staff status decision moved to Declined Trash",
+        life: 3000
+    });
+
+    showDeclinedTrashModal.value = false;
+    declinedTrashNote.value = '';
+
+    fetchStaffTasks(); // refresh tasks to reflect changes
+
+    activeTab.value = "DeclinedTrash"; // ✅ move tab
+};
+
+const staffAllVisibleTasks = computed(() => {
+    return filteredTasks(allStaffTasks.value).filter(
+        t => !['Declined', 'Declined Trash'].includes(t.staff_decision)
+    );
+});
 </script>
 
 <template>
 
     <Head title="Dashboard" />
     <AppLayout :breadcrumbs="breadcrumbItems" @search="handleClientSearch">
-        <Toast />
+        <DemoPresenterDashboard v-if="props.userRole === 'demo_presenter'" />
 
-        <!-- 🔥 SEARCH RESULT AREA -->
-        <div v-if="!showDashboard" class="p-4 space-y-6">
+        <template v-else>
+            <Toast />
 
-            <div v-if="searchResults.length === 0" class="text-gray-500 text-center py-10">
-                No clients found.
-            </div>
+            <!-- 🔥 SEARCH RESULT AREA -->
+            <div v-if="!showDashboard" class="p-4 space-y-6">
 
-            <div v-for="client in searchResults" :key="client.id"
-                class="bg-white shadow-lg rounded-2xl border border-gray-200 overflow-hidden">
+                <div v-if="searchResults.length === 0" class="text-gray-500 text-center py-10">
+                    No clients found.
+                </div>
 
-                <!-- Client Header -->
-                <div
-                    class="flex flex-col sm:flex-row justify-between items-start sm:items-center p-5 bg-indigo-50 border-b border-indigo-200">
-                    <div>
-                        <h4 class="text-2xl font-bold text-gray-900">{{ client.name }}</h4>
-                        <p class="text-gray-600 text-sm mt-1">
+                <div v-for="client in searchResults" :key="client.id"
+                    class="bg-white shadow-lg rounded-2xl border border-gray-200 overflow-hidden">
+
+                    <!-- Client Header -->
+                    <div
+                        class="flex flex-col sm:flex-row justify-between items-start sm:items-center p-5 bg-indigo-50 border-b border-indigo-200">
+                        <div>
+                            <h4 class="text-2xl font-bold text-gray-900">{{ client.name }}</h4>
+                            <p class="text-gray-600 text-sm mt-1">
                             Operator: {{ client.oparetor_number }} | Area: {{ client.area_name }} | Project: {{
                                 client.project_name }}
                         </p>
@@ -1711,7 +1956,7 @@ const submitDecline = async () => {
         </div>
 
 
-        <div v-if="showDashboard">
+        <div v-if="showDashboard && props.userRole !== 'demo_presenter'">
             <!-- Tab Buttons -->
             <div class="flex flex-wrap gap-2 p-5">
                 <button v-for="tab in tabs" :key="tab.key" @click="() => handleTabClick(tab.key)"
@@ -1734,7 +1979,7 @@ const submitDecline = async () => {
                bg-white p-4 rounded-2xl shadow-sm border">
 
                     <!-- 🔎 Search Customer -->
-                    <div class="xl:col-span-4 flex flex-col relative">
+                    <div class="xl:col-span-3 flex flex-col relative hidden">
                         <label class="text-sm font-medium mb-1">Search Customer</label>
 
                         <div class="relative">
@@ -1847,7 +2092,7 @@ const submitDecline = async () => {
 
                     <!-- 👤 Search Employee (Admin Only) -->
                     <div v-if="props.userRole === 'admin' && !['Future', 'New', 'Staff'].includes(activeTab)"
-                        class="xl:col-span-3 flex flex-col">
+                        class="xl:col-span-4 flex flex-col">
                         <label class="text-sm font-medium mb-1">Search Employee</label>
 
                         <Multiselect v-model="selectedEmployee" :options="employeeOptions" label="name" track-by="id"
@@ -1862,10 +2107,203 @@ const submitDecline = async () => {
                             placeholder="Filter by Shop Name" class="h-[44px] rounded-xl border border-blue-300" />
                     </div>
 
+                    <!-- 🔹 Status Filter -->
+                    <div v-if="props.userRole === 'admin' && activeTab === 'All'"
+                        class="xl:col-span-3 flex flex-col">
+                        <label class="text-sm font-medium mb-1">Status</label>
+
+                        <Multiselect v-model="selectedStatusFilter" :options="statusOptions" :searchable="false"
+                            :close-on-select="true"
+                            :show-no-results="false"
+                            placeholder="Select Status"
+                            class="h-[44px] rounded-xl border border-purple-300"
+                            label="label"
+                            track-by="value"
+                            />
+                    </div>
+
                     <!-- 🔄 Reset -->
-                    <div class="xl:col-span-1 flex">
-                        <Button icon="pi pi-refresh" class="h-[44px] w-full rounded-xl bg-red-100"
-                            @click="resetFilters" />
+                    <div class="xl:col-span-1 flex items-center gap-2">
+                        <Button
+                            icon="pi pi-refresh"
+                            class="h-[44px] w-full rounded-xl bg-red-100"
+                            @click="resetAllFilters"
+                        />
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex justify-center items-center gap-3 px-5">
+                <!-- 🔢 Result Count Badge (ADMIN + All tab only) -->
+                <span v-if="props.userRole === 'admin'
+                    && activeTab === 'All'"
+                    class="px-5 py-2 rounded-lg bg-indigo-600 text-white text-base font-semibold">
+                    Total Found- ({{ adminAllFilteredTasks.length }})
+                </span>
+            </div>
+
+            <!-- All Tasks (ADMIN ONLY) -->
+            <div v-if="activeTab === 'All' && props.userRole === 'admin'" class="p-4 sm:p-6">
+                <div class="bg-gradient-to-r from-indigo-600 to-indigo-400 rounded-2xl shadow-lg overflow-hidden">
+
+                    <!-- Header -->
+                    <div class="flex justify-between items-start sm:items-center p-4 gap-3 text-white">
+                        <h3 class="text-lg sm:text-xl font-semibold flex items-center gap-2">
+                            <i class="pi pi-list"></i> All Tasks (Admin)
+                        </h3>
+                        <span
+                            class="px-3 py-1 rounded-full bg-white/20 text-white text-sm font-medium backdrop-blur-sm shadow-inner">
+                            {{ tasksForActiveTab.length }}
+                        </span>
+                    </div>
+
+                    <!-- Task List -->
+                    <div
+                        :class="['p-4 bg-indigo-50 transition-all duration-300', { 'max-h-auto sm:max-h-110 overflow-y-auto pr-2': tasksForActiveTab.length > 9 }]">
+
+                        <transition-group name="fade" tag="div" class="space-y-3">
+                            <div
+                                v-for="(task, index) in tasksForActiveTab"
+                                :key="task.id"
+                                class="rounded-2xl shadow-md p-4 sm:p-5 transition-all duration-300 hover:shadow-lg border-l-4"
+                                :class="statusClasses(task.status)"
+                            >
+                                <!-- Title -->
+                                <div class="flex justify-between items-center mb-2">
+                                    <h2 class="font-semibold text-lg sm:text-xl">
+                                        {{ index + 1 }}. {{ task.task.title }}
+                                    </h2>
+
+                                    <div class="" >
+                                        <span
+                                            v-if="(task.status === 'Staff' || task.task?.status === 'Staff') && task.staff_decision === 'Approved'"
+                                            class="px-3 py-1 text-xs font-semibold rounded-full bg-green-100 text-green-700">
+                                            ✅ Approved by Admin
+                                        </span>
+
+                                        <span
+                                            v-if="(task.status === 'Staff' || task.task?.status === 'Staff') && task.staff_decision === 'Pending'"
+                                            class="px-3 py-1 text-xs font-semibold rounded-full bg-yellow-100 text-yellow-700">
+                                            ⏳ Waiting for Admin Decision
+                                        </span>
+
+                                        <!-- Status Badge -->
+                                        <span
+                                            class="px-3 py-1 text-xs font-semibold rounded-full shadow"
+                                            :class="statusClasses(task.status)"
+                                        >
+                                            {{ task.status }}
+                                        </span>
+                                    </div>
+                                </div>
+
+                                <!-- Details -->
+                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm font-medium">
+
+                                    <!-- LEFT -->
+                                    <div class="flex flex-col gap-1">
+                                        <p>
+                                            <i class="pi pi-user mr-1"></i>
+                                            Created By:
+                                            <span class="font-semibold">
+                                                <!-- If task status is Staff, show task.created_by -->
+                                                <span v-if="task.status === 'Staff'">
+                                                    {{ getUserName(task.created_by) }}
+                                                </span>
+
+                                                <!-- Otherwise, try task.task.created_by, fallback to task.created_by -->
+                                                <span v-else>
+                                                    {{ getUserName(task.task.created_by) }}
+                                                </span>
+                                            </span>
+                                        </p>
+
+                                        <p>
+                                            <i class="pi pi-calendar mr-1"></i>
+                                            Task Created:
+                                            <span>
+                                                {{ formatDateBD(task.created_at) || 'N/A' }}
+                                            </span>
+                                        </p>
+
+                                        <p>
+                                            <i class="pi pi-shop mr-1"></i>
+                                            Shop:
+                                            <span>
+                                                {{ task.task.shop_name || 'Unknown' }}
+                                            </span>
+                                        </p>
+
+                                        <p v-if="task.employee">
+                                            <i class="pi pi-users mr-1"></i>
+                                            Assigned To:
+                                            <span class="font-semibold capitalize">
+                                                {{ task.employee.name }} - ({{ task.employee.designation }})
+                                            </span>
+                                        </p>
+                                    </div>
+
+                                    <!-- RIGHT -->
+                                    <div class="flex flex-col gap-1">
+
+                                        <p v-if="task.task.start_date">
+                                            <i class="pi pi-calendar-plus mr-1"></i>
+                                            Start Date:
+                                            <span>
+                                                {{ formatDate(task.task.start_date) }}
+                                            </span>
+                                        </p>
+
+                                        <p v-if="task.assigned_at">
+                                            <i class="pi pi-clock mr-1"></i>
+                                            Assigned At:
+                                            <span>
+                                                {{ formatDateBD(task.assigned_at) }}
+                                            </span>
+                                        </p>
+
+                                        <p v-if="task.completed_at">
+                                            <i class="pi pi-check-circle mr-1"></i>
+                                            Completed At:
+                                            <span>
+                                                {{ formatDateBD(task.completed_at) }}
+                                            </span>
+                                        </p>
+
+                                    </div>
+                                </div>
+
+                                <!-- Actions -->
+                                <div class="flex flex-wrap justify-end gap-2 mt-4">
+                                    <Button
+                                        label="Details"
+                                        icon="pi pi-eye"
+                                        outlined
+                                        severity="info"
+                                        class="!text-sm !px-3 !py-1.5"
+                                        @click="openDetails(task)"
+                                    />
+                                    <Button
+                                        label="Work History"
+                                        icon="pi pi-clock"
+                                        outlined
+                                        severity="warning"
+                                        class="!text-sm !px-3 !py-1.5"
+                                        @click="openWorkHistory(task)"
+                                    />
+                                    <Button label="Notes" icon="pi pi-note" :badge="unreadNotes[task.id]"
+                                            badgeClass="bg-red-600 text-white !text-xs !w-5 !h-5 flex items-center justify-center"
+                                            class="p-button-sm" @click="openNotesModal(task)" />
+                                </div>
+
+                            </div>
+                        </transition-group>
+
+                        <!-- Empty -->
+                        <div v-if="tasksForActiveTab.length === 0"
+                            class="text-center py-6 text-gray-500 italic border-t border-indigo-200 mt-2">
+                            No tasks available.
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1911,35 +2349,58 @@ const submitDecline = async () => {
                                         task.isWorkingSession ? 'grid-cols-1 sm:grid-cols-3' : 'grid-cols-1 sm:grid-cols-2'
                                     ]">
                                         <!-- Left Side -->
-                                        <div class="flex flex-col gap-2">
-                                            <div class="flex items-center gap-2">
-                                                <i class="fa-solid fa-store"></i>
-                                                <p>Shop: {{ task.task.shop_name || 'Unknown' }}</p>
-                                            </div>
-                                            <div class="flex items-center gap-2">
-                                                <i class="fa-solid fa-user"></i>
-                                                <p>
-                                                    {{ props.userRole === 'admin' ? 'Assigned To:' : 'Assigned By:' }}
-                                                    <span class="font-semibold">
-                                                        {{ props.userRole === 'admin' ? task.employee.name :
-                                                            task.assigner.name }}
+                                        <div class="flex flex-col gap-1">
+                                            <p>
+                                                <i class="pi pi-user mr-1"></i>
+                                                Created By:
+                                                <span class="font-semibold">
+                                                    <!-- If task status is Staff, show task.created_by -->
+                                                    <span v-if="task.status === 'Staff'">
+                                                        {{ getUserName(task.created_by) }}
                                                     </span>
-                                                    <small v-if="props.userRole === 'admin'" class="text-gray-500">
-                                                        ({{ task.employee.designation }})
-                                                    </small>
-                                                </p>
-                                            </div>
+
+                                                    <!-- Otherwise, try task.task.created_by, fallback to task.created_by -->
+                                                    <span v-else>
+                                                        {{ getUserName(task.task?.created_by) ||
+                                                        getUserName(task.created_by) }}
+                                                    </span>
+                                                </span>
+                                            </p>
+
+                                            <p>
+                                                <i class="pi pi-calendar mr-1"></i>
+                                                Task Created:
+                                                <span>
+                                                    {{ formatDateBD(task.created_at) || 'N/A' }}
+                                                </span>
+                                            </p>
+
+                                            <p>
+                                                <i class="pi pi-shop mr-1"></i>
+                                                Shop:
+                                                <span>
+                                                    {{ task.task.shop_name || 'Unknown' }}
+                                                </span>
+                                            </p>
+
+                                            <p v-if="task.employee">
+                                                <i class="pi pi-users mr-1"></i>
+                                                Assigned To:
+                                                <span class="font-semibold capitalize">
+                                                    {{ task.employee.name }} - ({{ task.employee.designation }})
+                                                </span>
+                                            </p>
                                         </div>
 
                                         <!-- Right Side -->
                                         <div class="flex flex-col gap-2 lg:pl-10">
                                             <div class="flex items-center gap-2">
-                                                <i class="fa-solid fa-clipboard-list"></i>
-                                                <p>Task Assigned: {{ formatDateBD(task.assigned_at) || 'N/A' }}</p>
+                                                <i class="pi pi-calendar-plus mr-1"></i>
+                                                <p>Client Start: {{ formatDateBD(task.task.start_date) }}</p>
                                             </div>
                                             <div class="flex items-center gap-2">
-                                                <i class="fa-solid fa-calendar"></i>
-                                                <p>Client Start: {{ formatDateBD(task.task.start_date) }}</p>
+                                                <i class="fa-solid fa-clipboard-list"></i>
+                                                <p>Task Assigned: {{ formatDateBD(task.assigned_at) || 'N/A' }}</p>
                                             </div>
                                             <div class="flex items-center gap-2">
                                                 <i class="fa-solid fa-hourglass-start"></i>
@@ -1950,11 +2411,11 @@ const submitDecline = async () => {
                                                 <p>Employee End: {{ formatDateBD(task.end_date) }}</p>
                                             </div>
                                             <div class="flex items-center gap-2">
-                                                <i class="fa-solid fa-clock"></i>
+                                                <i class="pi pi-clock mr-1"></i>
                                                 <p>Committed: {{ task.committed_hours }} hrs</p>
                                                 <span v-if="task.worked_minutes">| Worked: {{
                                                     formatDuration(task.worked_minutes)
-                                                    }}</span>
+                                                }}</span>
                                             </div>
                                         </div>
 
@@ -1970,7 +2431,7 @@ const submitDecline = async () => {
                                                 Working Time
                                             </span>
                                             <button class="font-bold text-green-700 bg-white border border-green-500 rounded-lg px-4 py-2 mt-2
-                    shadow-md hover:shadow-lg transition-all duration-300 hover:scale-105 flex items-center gap-2">
+                                                shadow-md hover:shadow-lg transition-all duration-300 hover:scale-105 flex items-center gap-2">
                                                 <i class="fa-regular fa-clock"></i>
                                                 {{ runningTimers[task.id] !== undefined ?
                                                     formatTime(runningTimers[task.id])
@@ -2013,7 +2474,7 @@ const submitDecline = async () => {
             <Dialog header="Work History" v-model:visible="showWorkHistoryDialog" :modal="true" :closable="true"
                 class="w-[450px] md:w-[600px]">
                 <div v-if="workHistory.length === 0" class="text-gray-500 italic text-center py-4">
-                    No work history yet.
+                    {{ workHistoryMessage || "No working history." }}
                 </div>
 
                 <div v-else class="space-y-3">
@@ -2086,30 +2547,61 @@ const submitDecline = async () => {
                                         'grid-cols-1 sm:grid-cols-2'
                                     ]">
                                         <!-- Left Side -->
-                                        <div class="flex flex-col gap-2">
-                                            <div class="flex items-center gap-2">
-                                                <i class="fa-solid fa-store"></i>
-                                                <p>Shop: {{ task.task.shop_name || 'Unknown' }}</p>
-                                            </div>
-                                            <div class="flex items-center gap-2">
-                                                <i class="fa-solid fa-user"></i>
-                                                <p>
-                                                    {{ props.userRole === 'admin' ? 'Assigned To:' : 'Assigned By:' }}
-                                                    <span class="font-semibold">
-                                                        {{ props.userRole === 'admin' ? task.employee.name :
-                                                            task.assigner.name }}
+                                        <div class="flex flex-col gap-1">
+                                            <p>
+                                                <i class="pi pi-user mr-1"></i>
+                                                Created By:
+                                                <span class="font-semibold">
+                                                    <!-- If task status is Staff, show task.created_by -->
+                                                    <span v-if="task.status === 'Staff'">
+                                                        {{ getUserName(task.created_by) }}
                                                     </span>
-                                                    <small v-if="props.userRole === 'admin'" class="text-gray-500">
-                                                        ({{ task.employee.designation }})
-                                                    </small>
-                                                </p>
-                                            </div>
+
+                                                    <!-- Otherwise, try task.task.created_by, fallback to task.created_by -->
+                                                    <span v-else>
+                                                        {{ getUserName(task.task?.created_by) ||
+                                                            getUserName(task.created_by) }}
+                                                    </span>
+                                                </span>
+                                            </p>
+
+                                            <p>
+                                                <i class="pi pi-calendar mr-1"></i>
+                                                Task Created:
+                                                <span>
+                                                    {{ formatDateBD(task.created_at) || 'N/A' }}
+                                                </span>
+                                            </p>
+
+                                            <p>
+                                                <i class="pi pi-shop mr-1"></i>
+                                                Shop:
+                                                <span>
+                                                    {{ task.task.shop_name || 'Unknown' }}
+                                                </span>
+                                            </p>
+
+                                            <p v-if="task.employee">
+                                                <i class="pi pi-users mr-1"></i>
+                                                Assigned To:
+                                                <span class="font-semibold capitalize">
+                                                    {{ task.employee.name }} - ({{ task.employee.designation }})
+                                                </span>
+                                            </p>
                                         </div>
 
                                         <!-- Right Side -->
                                         <div class="flex flex-col gap-2">
                                             <div class="flex items-center gap-2">
-                                                <i class="fa-solid fa-calendar"></i>
+                                                <i class="pi pi-calendar-plus mr-1"></i>
+                                                <p>Client Project Start Date:
+                                                    <span :class="!task.task.start_date ? 'text-gray-400 italic' : ''">
+                                                        {{ formatDate(task.task.start_date) || 'Not Provided' }}
+                                                    </span>
+                                                </p>
+                                            </div>
+                                            <div class="flex items-center gap-2">
+                                                <i class="pi pi-calendar-plus mr-1"></i>
                                                 <p>Task Assigned :
                                                     <span>
                                                         {{ formatDateBD(task.assigned_at) || 'Not Provided' }}
@@ -2117,27 +2609,19 @@ const submitDecline = async () => {
                                                 </p>
                                             </div>
                                             <div class="flex items-center gap-2">
-                                                <i class="fa-solid fa-calendar"></i>
-                                                <p>Client Project Start Date:
-                                                    <span :class="!task.task.start_date ? 'text-gray-400 italic' : ''">
-                                                        {{ formatDateBD(task.task.start_date) || 'Not Provided' }}
-                                                    </span>
-                                                </p>
-                                            </div>
-                                            <div class="flex items-center gap-2">
                                                 <i class="fa-solid fa-hourglass-start"></i>
-                                                <p>Employee Start Date: {{ formatDateBD(task.start_date) }}</p>
+                                                <p>Employee Start Date: {{ formatDate(task.start_date) }}</p>
                                             </div>
                                             <div class="flex items-center gap-2">
                                                 <i class="fa-solid fa-hourglass-end"></i>
-                                                <p>Employee End Date: {{ formatDateBD(task.end_date) }}</p>
+                                                <p>Employee End Date: {{ formatDate(task.end_date) }}</p>
                                             </div>
                                             <div class="flex items-center gap-2">
-                                                <i class="fa-solid fa-clock"></i>
+                                                <i class="pi pi-clock mr-1"></i>
                                                 <p>Committed Hours: {{ task.committed_hours }} hrs</p>
                                                 <span v-if="task.worked_minutes">| Worked: {{
                                                     formatDuration(task.worked_minutes)
-                                                }}</span>
+                                                    }}</span>
                                             </div>
                                         </div>
                                     </div>
@@ -2205,50 +2689,73 @@ const submitDecline = async () => {
                                     <div
                                         class="grid grid-cols-1 sm:grid-cols-2 gap-5 text-red-700 font-medium text-sm sm:text-md">
                                         <!-- Left Side -->
-                                        <div class="flex flex-col gap-2">
-                                            <div class="flex items-center gap-2">
-                                                <i class="fa-solid fa-store"></i>
-                                                <p>Shop: {{ task.task.shop_name || 'Unknown' }}</p>
-                                            </div>
-                                            <div v-if="props.userRole !== 'staff'" class="flex items-center gap-2">
-                                                <i class="fa-solid fa-user"></i>
-                                                <p>
-                                                    {{ props.userRole === 'admin' ? 'Assigned To:' : 'Assigned By:' }}
-                                                    <span class="font-semibold">
-                                                        {{ props.userRole === 'admin' ? task.employee.name :
-                                                            task.assigner.name }}
+                                        <div class="flex flex-col gap-1">
+                                            <p>
+                                                <i class="pi pi-user mr-1"></i>
+                                                Created By:
+                                                <span class="font-semibold">
+                                                    <!-- If task status is Staff, show task.created_by -->
+                                                    <span v-if="task.status === 'Staff'">
+                                                        {{ getUserName(task.created_by) }}
                                                     </span>
-                                                    <small v-if="props.userRole === 'admin'" class="text-gray-500">
-                                                        ({{ task.employee.designation }})
-                                                    </small>
-                                                </p>
-                                            </div>
+
+                                                    <!-- Otherwise, try task.task.created_by, fallback to task.created_by -->
+                                                    <span v-else>
+                                                        {{ getUserName(task.task?.created_by) ||
+                                                            getUserName(task.created_by) }}
+                                                    </span>
+                                                </span>
+                                            </p>
+
+                                            <p>
+                                                <i class="pi pi-calendar mr-1"></i>
+                                                Task Created:
+                                                <span>
+                                                    {{ formatDateBD(task.created_at) || 'N/A' }}
+                                                </span>
+                                            </p>
+
+                                            <p>
+                                                <i class="pi pi-shop mr-1"></i>
+                                                Shop:
+                                                <span>
+                                                    {{ task.task.shop_name || 'Unknown' }}
+                                                </span>
+                                            </p>
+
+                                            <p v-if="task.employee">
+                                                <i class="pi pi-users mr-1"></i>
+                                                Assigned To:
+                                                <span class="font-semibold capitalize">
+                                                    {{ task.employee.name }} - ({{ task.employee.designation }})
+                                                </span>
+                                            </p>
                                         </div>
 
                                         <!-- Right Side -->
                                         <div v-if="props.userRole !== 'staff'" class="flex flex-col gap-2">
                                             <div class="flex items-center gap-2">
-                                                <i class="fa-solid fa-calendar"></i>
+                                                <i class="pi pi-calendar-plus mr-1"></i>
                                                 <p>Client Project Start Date:
                                                     <span :class="!task.task.start_date ? 'text-gray-400 italic' : ''">
-                                                        {{ formatDateBD(task.task.start_date) || 'Not Provided' }}
+                                                        {{ formatDate(task.task.start_date) || 'Not Provided' }}
                                                     </span>
                                                 </p>
                                             </div>
                                             <div class="flex items-center gap-2">
                                                 <i class="fa-solid fa-hourglass-start"></i>
-                                                <p>Employee Start Date: {{ formatDateBD(task.start_date) }}</p>
+                                                <p>Employee Start Date: {{ formatDate(task.start_date) }}</p>
                                             </div>
                                             <div class="flex items-center gap-2">
                                                 <i class="fa-solid fa-hourglass-end"></i>
-                                                <p>Employee End Date: {{ formatDateBD(task.end_date) }}</p>
+                                                <p>Employee End Date: {{ formatDate(task.end_date) }}</p>
                                             </div>
                                             <div class="flex items-center gap-2">
-                                                <i class="fa-solid fa-clock"></i>
+                                                <i class="pi pi-clock mr-1"></i>
                                                 <p>Committed Hours: {{ task.committed_hours }} hrs</p>
                                                 <span v-if="task.worked_minutes">| Worked: {{
                                                     formatDuration(task.worked_minutes)
-                                                    }}</span>
+                                                }}</span>
                                             </div>
                                         </div>
                                     </div>
@@ -2346,32 +2853,62 @@ const submitDecline = async () => {
                                             <div
                                                 class="grid grid-cols-1 sm:grid-cols-2 gap-5 text-green-700 font-medium text-sm sm:text-md">
                                                 <!-- Left Side -->
-                                                <div class="flex flex-col gap-2">
-                                                    <div class="flex items-center gap-2">
-                                                        <i class="fa-solid fa-store"></i>
-                                                        <p>Shop: {{ task.task.shop_name || 'Unknown' }}</p>
-                                                    </div>
-                                                    <div v-if="props.userRole !== 'staff'"
-                                                        class="flex items-center gap-2">
-                                                        <i class="fa-solid fa-user"></i>
-                                                        <p>
-                                                            {{ props.userRole === 'admin' ? 'Assigned To:' : 'Assigned By:' }}
-                                                            <span class="font-semibold">
-                                                                {{ props.userRole === 'admin' ? task.employee.name :
-                                                                    task.assigner.name }}
+                                                <div class="flex flex-col gap-1">
+                                                    <p>
+                                                        <i class="pi pi-user mr-1"></i>
+                                                        Created By:
+                                                        <span class="font-semibold">
+                                                            <!-- If task status is Staff, show task.created_by -->
+                                                            <span v-if="task.status === 'Staff'">
+                                                                {{ getUserName(task.created_by) }}
                                                             </span>
-                                                            <small v-if="props.userRole === 'admin'"
-                                                                class="text-gray-500">
-                                                                ({{ task.employee.designation }})
-                                                            </small>
-                                                        </p>
-                                                    </div>
+
+                                                            <!-- Otherwise, try task.task.created_by, fallback to task.created_by -->
+                                                            <span v-else>
+                                                                {{ getUserName(task.task?.created_by) ||
+                                                                    getUserName(task.created_by) }}
+                                                            </span>
+                                                        </span>
+                                                    </p>
+
+                                                    <p>
+                                                        <i class="pi pi-calendar mr-1"></i>
+                                                        Task Created:
+                                                        <span>
+                                                            {{ formatDateBD(task.created_at) || 'N/A' }}
+                                                        </span>
+                                                    </p>
+
+                                                    <p>
+                                                        <i class="pi pi-shop mr-1"></i>
+                                                        Shop:
+                                                        <span>
+                                                            {{ task.task.shop_name || 'Unknown' }}
+                                                        </span>
+                                                    </p>
+
+                                                    <p v-if="task.employee">
+                                                        <i class="pi pi-users mr-1"></i>
+                                                        Assigned To:
+                                                        <span class="font-semibold capitalize">
+                                                            {{ task.employee.name }} - ({{ task.employee.designation }})
+                                                        </span>
+                                                    </p>
                                                 </div>
 
                                                 <!-- Right Side -->
                                                 <div v-if="props.userRole !== 'staff'" class="flex flex-col gap-2">
                                                     <div class="flex items-center gap-2">
-                                                        <i class="fa-solid fa-calendar"></i>
+                                                        <i class="pi pi-calendar-plus mr-1"></i>
+                                                        <p>Client Project Start Date:
+                                                            <span
+                                                                :class="!task.task.start_date ? 'text-gray-400 italic' : ''">
+                                                                {{ formatDate(task.task.start_date) || 'Not Provided' }}
+                                                            </span>
+                                                        </p>
+                                                    </div>
+                                                    <div class="flex items-center gap-2">
+                                                        <i class="pi pi-calendar-plus mr-1"></i>
                                                         <p>Task Completed:
                                                             <span>
                                                                 {{ formatDateBD(task.completed_at) || 'Not Provided' }}
@@ -2379,25 +2916,15 @@ const submitDecline = async () => {
                                                         </p>
                                                     </div>
                                                     <div class="flex items-center gap-2">
-                                                        <i class="fa-solid fa-calendar"></i>
-                                                        <p>Client Project Start Date:
-                                                            <span
-                                                                :class="!task.task.start_date ? 'text-gray-400 italic' : ''">
-                                                                {{ formatDateBD(task.task.start_date) || 'Not Provided'
-                                                                }}
-                                                            </span>
-                                                        </p>
-                                                    </div>
-                                                    <div class="flex items-center gap-2">
                                                         <i class="fa-solid fa-hourglass-start"></i>
-                                                        <p>Employee Start Date: {{ formatDateBD(task.start_date) }}</p>
+                                                        <p>Employee Start Date: {{ formatDate(task.start_date) }}</p>
                                                     </div>
                                                     <div class="flex items-center gap-2">
                                                         <i class="fa-solid fa-hourglass-end"></i>
-                                                        <p>Employee End Date: {{ formatDateBD(task.end_date) }}</p>
+                                                        <p>Employee End Date: {{ formatDate(task.end_date) }}</p>
                                                     </div>
                                                     <div class="flex items-center gap-2">
-                                                        <i class="fa-solid fa-clock"></i>
+                                                        <i class="pi pi-clock mr-1"></i>
                                                         <p>Committed Hours: {{ task.committed_hours }} hrs</p>
                                                         <span v-if="task.worked_minutes">| Worked: {{
                                                             formatDuration(task.worked_minutes) }}</span>
@@ -2494,31 +3021,57 @@ const submitDecline = async () => {
                                             <div
                                                 class="grid grid-cols-1 sm:grid-cols-2 gap-5 text-green-700 font-medium text-sm sm:text-md">
                                                 <!-- Left Side -->
-                                                <div class="flex flex-col gap-2">
-                                                    <div class="flex items-center gap-2">
-                                                        <i class="fa-solid fa-store"></i>
-                                                        <p>Shop: {{ task.task.shop_name || "Unknown" }}</p>
-                                                    </div>
-                                                    <div v-if="props.userRole !== 'staff'"
-                                                        class="flex items-center gap-2">
-                                                        <i class="fa-solid fa-user"></i>
-                                                        <p>
-                                                            Assigned To:
-                                                            <span class="font-semibold">{{ task.employee.name }}</span>
-                                                            <small class="text-gray-500">({{ task.employee.designation
-                                                                }})</small>
-                                                        </p>
-                                                    </div>
+                                                <div class="flex flex-col gap-1">
+                                                    <p>
+                                                        <i class="pi pi-user mr-1"></i>
+                                                        Created By:
+                                                        <span class="font-semibold">
+                                                            <!-- If task status is Staff, show task.created_by -->
+                                                            <span v-if="task.status === 'Staff'">
+                                                                {{ getUserName(task.created_by) }}
+                                                            </span>
+
+                                                            <!-- Otherwise, try task.task.created_by, fallback to task.created_by -->
+                                                            <span v-else>
+                                                                {{ getUserName(task.task?.created_by) ||
+                                                                    getUserName(task.created_by) }}
+                                                            </span>
+                                                        </span>
+                                                    </p>
+
+                                                    <p>
+                                                        <i class="pi pi-calendar mr-1"></i>
+                                                        Task Created:
+                                                        <span>
+                                                            {{ formatDateBD(task.created_at) || 'N/A' }}
+                                                        </span>
+                                                    </p>
+
+                                                    <p>
+                                                        <i class="pi pi-shop mr-1"></i>
+                                                        Shop:
+                                                        <span>
+                                                            {{ task.task.shop_name || 'Unknown' }}
+                                                        </span>
+                                                    </p>
+
+                                                    <p v-if="task.employee">
+                                                        <i class="pi pi-users mr-1"></i>
+                                                        Assigned To:
+                                                        <span class="font-semibold">
+                                                            {{ task.employee.name }} - ({{ task.employee.designation }})
+                                                        </span>
+                                                    </p>
                                                 </div>
 
                                                 <!-- Right Side -->
                                                 <div class="flex flex-col gap-2">
                                                     <div class="flex items-center gap-2">
-                                                        <i class="fa-solid fa-calendar"></i>
+                                                        <i class="pi pi-calendar-plus mr-1"></i>
                                                         <p>Client Project Start Date:
                                                             <span
                                                                 :class="!task.task.start_date ? 'text-gray-400 italic' : ''">
-                                                                {{ formatDateBD(task.task.start_date) || 'Not Provided'
+                                                                {{ formatDate(task.task.start_date) || 'Not Provided'
                                                                 }}
                                                             </span>
                                                         </p>
@@ -2526,7 +3079,7 @@ const submitDecline = async () => {
                                                     <div class="flex items-center gap-2">
                                                         <i class="fa-solid fa-hourglass-start"></i>
                                                         <p>
-                                                            Employee Start Date: {{ formatDateBD(task.start_date) ||
+                                                            Employee Start Date: {{ formatDate(task.start_date) ||
                                                                 'Not Provided'
                                                             }}
                                                         </p>
@@ -2534,11 +3087,11 @@ const submitDecline = async () => {
                                                     <div class="flex items-center gap-2">
                                                         <i class="fa-solid fa-hourglass-end"></i>
                                                         <p>
-                                                            Employee End Date: {{ formatDateBD(task.end_date) || 'Not Provided' }}
+                                                            Employee End Date: {{ formatDate(task.end_date) || 'Not Provided' }}
                                                         </p>
                                                     </div>
                                                     <div class="flex items-center gap-2">
-                                                        <i class="fa-solid fa-clock"></i>
+                                                        <i class="pi pi-clock mr-1"></i>
                                                         <p>Committed Hours: {{ task.committed_hours || 0 }} hrs</p>
                                                         <span v-if="task.worked_minutes">| Worked: {{
                                                             formatDuration(task.worked_minutes) }}</span>
@@ -2611,6 +3164,14 @@ const submitDecline = async () => {
                                         <!-- Left Side -->
                                         <div class="flex flex-col gap-2">
                                             <div class="flex items-center gap-2">
+                                                <p class="text-gray-500 text-sm mt-2 flex items-center gap-2">
+                                                    <i class="pi pi-user text-blue-500"></i>
+                                                    <span>Created By: {{ getUserName(task.created_by) }}</span>
+                                                    <i class="pi pi-calendar text-purple-500 ml-4"></i>
+                                                    <span>Date: {{ formatDate(task.created_at) }}</span>
+                                                </p>
+                                            </div>
+                                            <div class="flex items-center gap-2">
                                                 <i class="fa-solid fa-store"></i>
                                                 <p>Shop: {{ task.task.shop_name || 'Unknown' }}</p>
                                             </div>
@@ -2619,7 +3180,7 @@ const submitDecline = async () => {
                                         <!-- Right Side (Dates + Hours) -->
                                         <div class="flex flex-col gap-2">
                                             <div class="flex items-center gap-2">
-                                                <i class="fa-solid fa-calendar"></i>
+                                                <i class="pi pi-calendar-plus mr-1"></i>
                                                 <p>Task Created Date :
                                                     <span>
                                                         {{ formatDateBD(task.created_at) || 'Not Provided' }}
@@ -2627,10 +3188,10 @@ const submitDecline = async () => {
                                                 </p>
                                             </div>
                                             <div class="flex items-center gap-2">
-                                                <i class="fa-solid fa-calendar"></i>
+                                                <i class="pi pi-calendar-plus mr-1"></i>
                                                 <p>Project Start Date:
                                                     <span :class="!task.task.start_date ? 'text-gray-400 italic' : ''">
-                                                        {{ formatDateBD(task.task.start_date) || 'Not Provided' }}
+                                                        {{ formatDate(task.task.start_date) || 'Not Provided' }}
                                                     </span>
                                                 </p>
                                             </div>
@@ -2693,39 +3254,51 @@ const submitDecline = async () => {
                                             {{ task.task.status }}
                                         </span>
                                     </div>
-
-                                    <div class="mb-2 text-sm text-orange-700 font-bold">
-                                        Created By: <strong>{{ getStaffName(task.created_by) }}</strong>
-                                    </div>
-
                                     <!-- Task Details -->
-                                    <div
-                                        class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-orange-700 font-medium text-md">
-
+                                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-orange-700 font-medium text-md">
                                         <!-- Left Side -->
-                                        <div class="flex flex-col gap-2">
-                                            <div class="flex items-center gap-2">
-                                                <i class="fa-solid fa-store"></i>
-                                                <p>Shop: {{ task.task.shop_name || 'Unknown' }}</p>
-                                            </div>
+                                        <div class="flex flex-col gap-1">
+                                            <p>
+                                                <i class="pi pi-user mr-1"></i>
+                                                Created By:
+                                                <span class="font-semibold">
+                                                    <!-- If task status is Staff, show task.created_by -->
+                                                    <span v-if="task.status === 'Staff'">
+                                                        {{ getUserName(task.created_by) }}
+                                                    </span>
+
+                                                    <!-- Otherwise, try task.task.created_by, fallback to task.created_by -->
+                                                    <span v-else>
+                                                        {{ getUserName(task.task?.created_by) ||
+                                                        getUserName(task.created_by) }}
+                                                    </span>
+                                                </span>
+                                            </p>
+
+                                            <p>
+                                                <i class="pi pi-calendar mr-1"></i>
+                                                Task Created:
+                                                <span>
+                                                    {{ formatDateBD(task.created_at) || 'N/A' }}
+                                                </span>
+                                            </p>
+
+                                            <p>
+                                                <i class="pi pi-shop mr-1"></i>
+                                                Shop:
+                                                <span>
+                                                    {{ task.task.shop_name || 'Unknown' }}
+                                                </span>
+                                            </p>
                                         </div>
 
                                         <!-- Right Side (Dates + Hours) -->
                                         <div class="flex flex-col gap-2">
                                             <div class="flex items-center gap-2">
-                                                <i class="fa-solid fa-calendar"></i>
-                                                <p>Task Created Date :
-                                                    <span>
-                                                        {{ formatDateBD(task.created_at) || 'Not Provided' }}
-                                                    </span>
-                                                </p>
-                                            </div>
-
-                                            <div class="flex items-center gap-2">
-                                                <i class="fa-solid fa-calendar"></i>
+                                                <i class="pi pi-calendar-plus mr-1"></i>
                                                 <p>Start Date:
                                                     <span :class="!task.task.start_date ? 'text-gray-400 italic' : ''">
-                                                        {{ formatDateBD(task.task.start_date) || 'Not Provided' }}
+                                                        {{ formatDate(task.task.start_date) || 'Not Provided' }}
                                                     </span>
                                                 </p>
                                             </div>
@@ -2748,27 +3321,31 @@ const submitDecline = async () => {
                                             class="p-button-sm" @click="openNotesModal(task)" />
                                         <!-- Decision Area -->
                                         <div class="flex items-center gap-2">
-
-                                            <!-- If no decision yet -->
-                                            <template v-if="!task.task.staff_decision">
+                                            <!-- PENDING: show both buttons -->
+                                            <template v-if="task.staff_decision === 'Pending'">
                                                 <Button label="Approve" icon="pi pi-check" severity="success"
-                                                    @click="approveStaffTask(task.task.id)" />
+                                                    @click="openApproveModal(task.task)" />
 
                                                 <Button label="Decline" icon="pi pi-times" severity="danger"
                                                     @click="openDeclineModal(task.task)" />
                                             </template>
 
-                                            <!-- If Approved -->
-                                            <span v-else-if="task.task.staff_decision === 'Approved'"
+                                            <!-- APPROVED: show label only -->
+                                            <span v-else-if="task.staff_decision === 'Approved'"
                                                 class="px-3 py-1 rounded-full bg-green-100 text-green-700 font-semibold text-sm">
                                                 ✅ Approved
                                             </span>
 
-                                            <!-- If Declined -->
-                                            <span v-else-if="task.task.staff_decision === 'Declined'"
-                                                class="px-3 py-1 rounded-full bg-red-100 text-red-700 font-semibold text-sm">
-                                                ❌ Declined
-                                            </span>
+                                            <!-- DECLINED: show declined label + allow approve later -->
+                                            <template v-else-if="task.staff_decision === 'Declined'">
+                                                <span
+                                                    class="px-3 py-1 rounded-full bg-red-100 text-red-700 font-semibold text-sm">
+                                                    ❌ Declined
+                                                </span>
+
+                                                <Button label="Approve" icon="pi pi-check" severity="success"
+                                                    @click="openApproveModal(task.task)" />
+                                            </template>
 
                                         </div>
                                     </div>
@@ -2828,6 +3405,22 @@ const submitDecline = async () => {
                                             <p>Shop: {{ task.task.shop_name || 'Unknown' }}</p>
                                         </div>
 
+                                        <div class="flex flex-col gap-1">
+                                            <div class="flex items-center gap-2">
+                                                <i class="pi pi-user"></i>
+                                                <span>Created By:
+                                                    <span class="font-semibold"> {{ getUserName(task.task.created_by)
+                                                        }}</span>
+                                                </span>
+                                            </div>
+                                            <div class="flex items-center gap-2">
+                                                <i class="pi pi-calendar "></i>
+                                                <span>Task Created Date:
+                                                    <span class="font-semibold">{{ formatDateBD(task.task.created_at) }}</span>
+                                                </span>
+                                            </div>
+                                        </div>
+
                                         <div class="flex items-center gap-2">
                                             <i class="fa-solid fa-user"></i>
                                             <p>
@@ -2847,26 +3440,32 @@ const submitDecline = async () => {
                                     <!-- Right Side (Dates + Hours) -->
                                     <div class="flex flex-col gap-2">
                                         <div class="flex items-center gap-2">
-                                            <i class="fa-solid fa-calendar"></i>
+                                            <i class="pi pi-calendar-plus mr-1"></i>
                                             <p>Client Project Start Date:
                                                 <span :class="!task.task.start_date ? 'text-gray-400 italic' : ''">
-                                                    {{ formatDateBD(task.task.start_date) || 'Not Provided' }}
+                                                    {{ formatDate(task.task.start_date) || 'Not Provided' }}
                                                 </span>
                                             </p>
                                         </div>
 
                                         <div class="flex items-center gap-2">
                                             <i class="fa-solid fa-hourglass-start"></i>
-                                            <p>Employee Start Date: {{ formatDateBD(task.start_date) }}</p>
+                                            <p>Employee Start Date: {{ formatDate(task.start_date) }}</p>
                                         </div>
 
                                         <div class="flex items-center gap-2">
                                             <i class="fa-solid fa-hourglass-end"></i>
-                                            <p>Employee End Date: {{ formatDateBD(task.end_date) }}</p>
+                                            <p>Employee End Date: {{ formatDate(task.end_date) }}</p>
+                                        </div>
+
+
+                                        <div class="flex items-center gap-2">
+                                            <i class="fa-solid fa-hourglass-end"></i>
+                                            <p>Completed Task Date: {{ formatDateBD(task.completed_at) }}</p>
                                         </div>
 
                                         <div class="flex items-center gap-2">
-                                            <i class="fa-solid fa-clock"></i>
+                                            <i class="pi pi-clock mr-1"></i>
                                             <p>Committed Hours: {{ task.committed_hours }} hrs</p>
                                             <span v-if="task.worked_minutes">
                                                 | Worked: {{ formatDuration(task.worked_minutes) }}
@@ -2938,14 +3537,31 @@ const submitDecline = async () => {
                                     class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-pink-700 font-medium text-sm sm:text-md">
 
                                     <!-- Left Side -->
-                                    <div class="flex flex-col gap-2">
-                                        <div class="flex items-center gap-2">
+                                    <div class="flex flex-col gap-1">
+                                        <div class="flex items-center gap-1">
                                             <i class="fa-solid fa-store"></i>
                                             <p>Shop: {{ task.task.shop_name || 'Unknown' }}</p>
                                         </div>
 
+                                        <div class="flex flex-col gap-1">
+                                            <div class="flex items-center gap-1">
+                                                <i class="pi pi-user"></i>
+                                                <span>Created By:
+                                                    <span class="font-semibold"> {{ getUserName(task.task.created_by)
+                                                        }}</span>
+                                                </span>
+                                            </div>
+                                            <div class="flex items-center gap-1">
+                                                <i class="pi pi-calendar "></i>
+                                                <span>Task Created Date:
+                                                    <span class="font-semibold">{{ formatDateBD(task.created_at)
+                                                        }}</span>
+                                                </span>
+                                            </div>
+                                        </div>
+
                                         <!-- Only show if user is not staff -->
-                                        <div v-if="props.userRole !== 'staff'" class="flex items-center gap-2">
+                                        <div v-if="props.userRole !== 'staff'" class="flex items-center gap-1">
                                             <i class="fa-solid fa-user"></i>
                                             <p>
                                                 {{ props.userRole === 'admin' ? 'Assigned To:' : 'Assigned By:' }}
@@ -2954,7 +3570,7 @@ const submitDecline = async () => {
                                                         task.assigner.name
                                                     }}
                                                 </span>
-                                                <small v-if="props.userRole === 'admin'" class="text-gray-500">
+                                                <small v-if="props.userRole === 'admin'" class="text-gray-500 font-semibold">
                                                     ({{ task.employee.designation }})
                                                 </small>
                                             </p>
@@ -2963,9 +3579,13 @@ const submitDecline = async () => {
 
                                     <!-- Right Side (Dates + Hours) -->
                                     <div v-if="props.userRole !== 'staff'" class="flex flex-col gap-2">
+                                        <div class="flex items-center gap-2">
+                                            <i class="pi pi-calendar-plus mr-1"></i>
+                                            <p>Client Project Start Date: {{ formatDate(task.task.start_date) }}</p>
+                                        </div>
 
                                         <div class="flex items-center gap-2">
-                                            <i class="fa-solid fa-calendar"></i>
+                                            <i class="pi pi-calendar-plus mr-1"></i>
                                             <p>Task Re-Assigned :
                                                 <span>
                                                     {{ formatDateBD(task.assigned_at) || 'Not Provided' }}
@@ -2974,22 +3594,17 @@ const submitDecline = async () => {
                                         </div>
 
                                         <div class="flex items-center gap-2">
-                                            <i class="fa-solid fa-calendar"></i>
-                                            <p>Client Project Start Date: {{ formatDateBD(task.task.start_date) }}</p>
-                                        </div>
-
-                                        <div class="flex items-center gap-2">
                                             <i class="fa-solid fa-hourglass-start"></i>
-                                            <p>Employee Start Date: {{ formatDateBD(task.start_date) }}</p>
+                                            <p>Employee Start Date: {{ formatDate(task.start_date) }}</p>
                                         </div>
 
                                         <div class="flex items-center gap-2">
                                             <i class="fa-solid fa-hourglass-end"></i>
-                                            <p>Employee End Date: {{ formatDateBD(task.end_date) }}</p>
+                                            <p>Employee End Date: {{ formatDate(task.end_date) }}</p>
                                         </div>
 
                                         <div class="flex items-center gap-2">
-                                            <i class="fa-solid fa-clock"></i>
+                                            <i class="pi pi-clock mr-1"></i>
                                             <p>Committed Hours: {{ task.committed_hours }} hrs</p>
                                             <span v-if="task.worked_minutes">
                                                 | Worked: {{ formatDuration(task.worked_minutes) }}
@@ -3022,9 +3637,8 @@ const submitDecline = async () => {
                 </div>
             </div>
 
-
             <!-- All Tasks -->
-            <div v-if="activeTab === 'All'" class="p-4 sm:p-6">
+            <div v-if="activeTab === 'All' && props.userRole === 'staff'" class="p-4 sm:p-6">
                 <div class="bg-gradient-to-r from-blue-600 to-blue-400 rounded-2xl shadow-lg overflow-hidden">
 
                     <!-- Header -->
@@ -3034,7 +3648,7 @@ const submitDecline = async () => {
                         </h3>
                         <span
                             class="px-3 py-1 rounded-full bg-white/20 text-white text-sm font-medium backdrop-blur-sm shadow-inner">
-                            {{ filteredTasks(allStaffTasks).length }}
+                            {{ filteredTasks(staffAllVisibleTasks).length }}
                         </span>
                     </div>
 
@@ -3042,83 +3656,116 @@ const submitDecline = async () => {
                     <div
                         :class="['p-4 bg-blue-50 transition-all duration-300', { 'max-h-auto sm:max-h-96 overflow-y-auto pr-2': tasksForActiveTab.length > 8 }]">
                         <transition-group name="fade" tag="div" class="space-y-3">
-                            <div v-for="(task, index) in filteredTasks(allStaffTasks)" :key="task.id"
-                                class="rounded-2xl shadow-md p-4 sm:p-5 transition-all duration-300 hover:shadow-lg border-l-4 border-blue-500 bg-white text-blue-700">
+                            <div v-for="(task, index) in staffAllVisibleTasks" :key="task.id" class="rounded-2xl shadow-md p-4 sm:p-5 transition-all duration-300 hover:shadow-lg border-l-4 border-blue-500 bg-white text-blue-700">
+                                <div>
 
-                                <!-- Title + Status -->
-                                <div
-                                    class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-2 gap-2">
-                                    <h2 class="font-semibold text-blue-800 text-lg sm:text-xl">
-                                        {{ index + 1 }}. {{ task.task.title }}
-                                    </h2>
-                                    <span
-                                        v-if="task.staff_decision === 'Approved'"
-                                        class="px-3 py-1 text-xs font-semibold rounded-full bg-green-100 text-green-700">
-                                        Approved by Admin
-                                    </span>
+                                    <!-- Title + Status -->
+                                    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-2 gap-2">
 
-                                    <span
-                                        v-else-if="task.staff_decision === 'Declined'"
-                                        class="px-3 py-1 text-xs font-semibold rounded-full bg-red-100 text-red-700">
-                                        Declined by Admin
-                                    </span>
+                                        <h2 class="font-semibold text-blue-800 text-lg sm:text-xl">
+                                            {{ index + 1 }}. {{ task.task.title }}
+                                        </h2>
 
-                                    <span v-else
-                                        class="px-3 py-1 text-xs font-semibold rounded-full border border-blue-300 bg-blue-100">
-                                        {{ getWorkingBadge(task) }}
-                                    </span>
-                                </div>
-
-                                <!-- Task Details -->
-                                <div
-                                    class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-blue-700 font-medium text-sm sm:text-md">
-
-                                    <!-- Left Side -->
-                                    <div class="flex flex-col gap-2">
                                         <div class="flex items-center gap-2">
-                                            <i class="fa-solid fa-store"></i>
-                                            <p>Shop: {{ task.task.shop_name || 'Unknown' }}</p>
+                                            <!-- APPROVED -->
+                                            <span v-if="task.staff_decision === 'Approved'"
+                                                class="px-3 py-1 text-xs font-semibold rounded-full bg-green-100 text-green-700">
+                                                ✅ Approved by Admin
+                                            </span>
+
+                                            <!-- DECLINED -->
+                                            <span v-else-if="task.staff_decision === 'Declined'"
+                                                class="px-3 py-1 text-xs font-semibold rounded-full bg-red-100 text-red-700">
+                                                ❌ Declined by Admin
+                                            </span>
+
+                                            <!-- PENDING -->
+                                            <div class="flex sm:flex-row items-start sm:items-center gap-2">
+                                                <span
+                                                    class="px-3 py-1 text-xs font-semibold rounded-full border border-blue-300 bg-blue-100">
+                                                    {{ getWorkingBadge(task) }}
+                                                </span>
+
+                                                <span v-if="task.staff_decision === 'Pending'"
+                                                    class="px-3 py-1 text-xs font-semibold rounded-full bg-yellow-100 text-yellow-700">
+                                                    ⏳ Waiting for Admin Decision
+                                                </span>
+                                            </div>
                                         </div>
+
                                     </div>
 
-                                    <!-- Right Side -->
-                                    <div v-if="task.task.status === 'Working'" class="flex flex-col gap-2">
-                                        <div class="flex items-center gap-2">
-                                            <i class="fa-solid fa-calendar"></i>
-                                            <p>
-                                                Start Date: {{ formatDateBD(task.task.task_assignments[0]?.start_date)
-                                                    || 'N/A'
-                                                }}
-                                            </p>
+                                    <!-- Task Details -->
+                                    <div
+                                        class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-blue-700 font-medium text-sm sm:text-md">
+
+                                        <!-- Left Side -->
+                                        <div class="flex flex-col gap-2">
+                                            <div class="flex items-center gap-2">
+                                                <i class="fa-solid fa-store"></i>
+                                                <p>Shop: {{ task.task.shop_name || 'Unknown' }}</p>
+                                            </div>
                                         </div>
 
-                                        <div class="flex items-center gap-2">
-                                            <i class="fa-solid fa-calendar-check"></i>
-                                            <p>
-                                                End Date: {{ formatDateBD(task.task.task_assignments[0]?.end_date) ||
-                                                    'N/A' }}
-                                            </p>
+                                        <!-- Right Side -->
+                                        <div class="flex flex-col gap-2">
+                                            <div class="flex items-center gap-2">
+                                                <i class="pi pi-calendar-plus mr-1"></i>
+                                                <p>Task Created Date :
+                                                    <span>
+                                                        {{ formatDateBD(task.created_at) || 'Not Provided' }}
+                                                    </span>
+                                                </p>
+                                            </div>
+
+                                            <div class="flex items-center gap-2">
+                                                <i class="pi pi-calendar-plus mr-1"></i>
+                                                <p>Start Date:
+                                                    <span :class="!task.task.start_date ? 'text-gray-400 italic' : ''">
+                                                        {{ formatDateBD(task.task.start_date) || 'Not Provided' }}
+                                                    </span>
+                                                </p>
+                                            </div>
                                         </div>
+
+                                        <div v-if="task.task.status === 'Working'" class="flex flex-col gap-2">
+                                            <div class="flex items-center gap-2">
+                                                <i class="pi pi-calendar-plus mr-1"></i>
+                                                <p>
+                                                    Start Date: {{ formatDateBD(task.task.task_assignments[0]?.start_date)
+                                                        || 'N/A'
+                                                    }}
+                                                </p>
+                                            </div>
+
+                                            <div class="flex items-center gap-2">
+                                                <i class="fa-solid fa-calendar-check"></i>
+                                                <p>
+                                                    End Date: {{ formatDateBD(task.task.task_assignments[0]?.end_date) ||
+                                                        'N/A' }}
+                                                </p>
+                                            </div>
+                                        </div>
+
+                                    </div>
+
+                                    <!-- Actions -->
+                                    <div class="flex flex-wrap justify-end gap-2 mt-4">
+                                        <Button label="Details" icon="pi pi-eye" outlined severity="danger"
+                                            class="!text-sm !px-3 !py-1.5" @click="openDetails(task)" />
+                                        <!-- Note add modal button -->
+                                        <Button label="Notes" icon="pi pi-note" :badge="unreadNotes[task.id]"
+                                            badgeClass="bg-red-600 text-white !text-xs !w-5 !h-5 flex items-center justify-center"
+                                            class="!text-sm !px-3 !py-1.5 text-white" @click="openNotesModal(task)" />
+                                        <Button v-if="props.userRole === 'employee'" label="Start Working"
+                                            icon="pi pi-check" severity="danger" class="!text-sm !px-3 !py-1.5"
+                                            @click="changeStatus(task, 'Working')" />
+                                        <Button v-if="props.userRole !== 'staff'" label="Work History" icon="pi pi-clock"
+                                            outlined severity="info" class="!text-sm !px-3 !py-1.5"
+                                            @click="openWorkHistory(task)" />
                                     </div>
 
                                 </div>
-
-                                <!-- Actions -->
-                                <div class="flex flex-wrap justify-end gap-2 mt-4">
-                                    <Button label="Details" icon="pi pi-eye" outlined severity="danger"
-                                        class="!text-sm !px-3 !py-1.5" @click="openDetails(task)" />
-                                    <!-- Note add modal button -->
-                                     <Button label="Notes" icon="pi pi-note" :badge="unreadNotes[task.id]"
-                                        badgeClass="bg-red-600 text-white !text-xs !w-5 !h-5 flex items-center justify-center"
-                                        class="!text-sm !px-3 !py-1.5 text-white" @click="openNotesModal(task)" />
-                                    <Button v-if="props.userRole === 'employee'" label="Start Working"
-                                        icon="pi pi-check" severity="danger" class="!text-sm !px-3 !py-1.5"
-                                        @click="changeStatus(task, 'Working')" />
-                                    <Button v-if="props.userRole !== 'staff'" label="Work History" icon="pi pi-clock"
-                                        outlined severity="info" class="!text-sm !px-3 !py-1.5"
-                                        @click="openWorkHistory(task)" />
-                                </div>
-
                             </div>
                         </transition-group>
 
@@ -3126,6 +3773,256 @@ const submitDecline = async () => {
                         <div v-if="allStaffTasks.length === 0"
                             class="text-center py-6 text-gray-500 italic border-t border-blue-200 mt-2">
                             No tasks available.
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Declined Tasks -->
+            <div v-if="activeTab === 'Declined'" class="p-4 sm:p-6">
+                <div class="bg-gradient-to-r from-red-600 to-red-400 rounded-2xl shadow-lg overflow-hidden">
+
+                    <!-- Header -->
+                    <div class="flex justify-between items-start sm:items-center p-4 gap-3 text-white">
+                        <h3 class="text-lg sm:text-xl font-semibold flex items-center gap-2">
+                            <i class="pi pi-times-circle"></i> Declined Tasks
+                        </h3>
+                        <span
+                            class="px-3 py-1 rounded-full bg-white/20 text-white text-sm font-medium backdrop-blur-sm shadow-inner">
+                            {{filteredTasks(allStaffTasks).filter(t => t.staff_decision === 'Declined').length}}
+                        </span>
+                    </div>
+
+                    <!-- Task List -->
+                    <div class="p-4 bg-red-50 transition-all duration-300">
+                        <transition-group name="fade" tag="div" class="space-y-3">
+
+                            <div v-for="(task, index) in filteredTasks(allStaffTasks).filter(t => t.staff_decision === 'Declined')"
+                                :key="task.id"
+                                class="rounded-2xl shadow-md p-4 sm:p-5 transition-all duration-300 hover:shadow-lg border-l-4 border-red-500 bg-white text-red-700">
+
+                                <!-- Title + Status -->
+                                <div
+                                    class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-2 gap-2">
+                                    <h2 class="font-semibold text-red-800 text-lg sm:text-xl">
+                                        {{ index + 1 }}. {{ task.task.title }}
+                                    </h2>
+
+                                    <span class="px-3 py-1 text-xs font-semibold rounded-full bg-red-100 text-red-700">
+                                        ❌ Declined by Admin
+                                    </span>
+                                </div>
+
+                                <!-- Decline Reason -->
+                                <p v-if="task.decline_note" class="text-sm text-red-600 italic mb-2">
+                                    Reason: {{ task.decline_note }}
+                                </p>
+
+                                <!-- Task Details -->
+                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm font-medium">
+
+                                    <!-- LEFT -->
+                                    <div class="flex flex-col gap-1">
+                                        <p>
+                                            <i class="pi pi-user mr-1"></i>
+                                            Created By:
+                                            <span class="font-semibold">
+                                                    {{ getUserName(task.created_by) }}
+                                            </span>
+                                        </p>
+
+                                        <p>
+                                            <i class="pi pi-calendar mr-1"></i>
+                                            Task Created:
+                                            <span>
+                                                {{ formatDateBD(task.created_at) || 'N/A' }}
+                                            </span>
+                                        </p>
+
+                                        <p>
+                                            <i class="pi pi-shop mr-1"></i>
+                                            Shop:
+                                            <span>
+                                                {{ task.task.shop_name || 'Unknown' }}
+                                            </span>
+                                        </p>
+
+                                        <p v-if="task.employee">
+                                            <i class="pi pi-users mr-1"></i>
+                                            Assigned To:
+                                            <span class="font-semibold">
+                                                {{ task.employee.name }}
+                                            </span>
+                                        </p>
+                                    </div>
+
+                                    <!-- RIGHT -->
+                                    <div class="flex flex-col gap-1">
+
+                                        <p v-if="task.task.start_date">
+                                            <i class="pi pi-calendar-plus mr-1"></i>
+                                            Start Date:
+                                            <span>
+                                                {{ formatDate(task.task.start_date) }}
+                                            </span>
+                                        </p>
+
+                                        <p v-if="task.assigned_at">
+                                            <i class="pi pi-clock mr-1"></i>
+                                            Assigned At:
+                                            <span>
+                                                {{ formatDateBD(task.assigned_at) }}
+                                            </span>
+                                        </p>
+
+                                        <p v-if="task.completed_at">
+                                            <i class="pi pi-check-circle mr-1"></i>
+                                            Completed At:
+                                            <span>
+                                                {{ formatDateBD(task.completed_at) }}
+                                            </span>
+                                        </p>
+
+                                    </div>
+                                </div>
+
+                                <!-- Actions -->
+                                <div class="flex justify-end gap-2 mt-4">
+                                    <Button label="Details" icon="pi pi-eye" outlined severity="danger"
+                                        class="!text-sm !px-3 !py-1.5" @click="openDetails(task)" />
+
+                                    <Button label="Edit" icon="pi pi-pencil"
+                                        severity="warning" class="!text-sm !px-3 !py-1.5"
+                                        @click="editEntry(task)" />
+
+                                    <Button label="Notes" icon="pi pi-note" :badge="unreadNotes[task.id]"
+                                        badgeClass="bg-red-600 text-white !text-xs !w-5 !h-5 flex items-center justify-center"
+                                        class="!text-sm !px-3 !py-1.5" @click="openNotesModal(task)" />
+
+                                    <Button v-if="props.userRole === 'admin'" label="Approve" icon="pi pi-check" severity="success"
+                                        @click="openApproveModal(task)" />
+
+                                    <Button label="Declined Trash" icon="pi pi-trash" severity="danger"
+                                        class="!text-sm !px-3 !py-1.5" @click="openDeclinedTrashModal(task)"
+                                    />
+                                </div>
+
+                            </div>
+
+                        </transition-group>
+
+                        <!-- Empty -->
+                        <div v-if="filteredTasks(allStaffTasks).filter(t => t.staff_decision === 'Declined').length === 0"
+                            class="text-center py-6 text-gray-500 italic border-t border-red-200 mt-2">
+                            No declined tasks.
+                        </div>
+
+                    </div>
+                </div>
+            </div>
+
+            <!-- Declined Trash Tasks -->
+            <div v-if="activeTab === 'DeclinedTrash'" class="p-4 sm:p-6">
+                <div class="bg-gradient-to-r from-gray-700 to-gray-500 rounded-2xl shadow-lg overflow-hidden">
+
+                    <div class="flex justify-between items-center p-4 text-white">
+                        <h3 class="text-lg font-semibold flex items-center gap-2">
+                            <i class="pi pi-trash"></i> Declined Trash
+                        </h3>
+                        <span class="px-3 py-1 rounded-full bg-white/20 text-sm">
+                            {{filteredTasks(allStaffTasks).filter(t => t.staff_decision === 'Declined Trash').length}}
+                        </span>
+                    </div>
+
+                    <div class="p-4 bg-gray-100 space-y-3">
+                        <div v-for="(task, index) in filteredTasks(allStaffTasks).filter(t => t.staff_decision === 'Declined Trash')"
+                            :key="task.id" class="rounded-xl p-4 bg-white border-l-4 border-gray-600">
+
+                            <h2 class="font-semibold text-gray-800">
+                                {{ index + 1 }}. {{ task.task.title }}
+                            </h2>
+
+                            <p class="text-sm text-gray-600 italic py-1 pb-2">
+                                Trash Reason: {{ task.declined_trash_note }}
+                            </p>
+
+                            <!-- Task Details -->
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm font-medium">
+
+                                <!-- LEFT -->
+                                <div class="flex flex-col gap-1">
+                                    <p>
+                                        <i class="pi pi-user mr-1"></i>
+                                        Created By:
+                                        <span class="font-semibold">
+                                            {{ getUserName(task.created_by) }}
+                                        </span>
+                                    </p>
+
+                                    <p>
+                                        <i class="pi pi-calendar mr-1"></i>
+                                        Task Created:
+                                        <span>
+                                            {{ formatDateBD(task.created_at) || 'N/A' }}
+                                        </span>
+                                    </p>
+
+                                    <p>
+                                        <i class="pi pi-shop mr-1"></i>
+                                        Shop:
+                                        <span>
+                                            {{ task.task.shop_name || 'Unknown' }}
+                                        </span>
+                                    </p>
+
+                                    <p v-if="task.employee">
+                                        <i class="pi pi-users mr-1"></i>
+                                        Assigned To:
+                                        <span class="font-semibold">
+                                            {{ task.employee.name }}
+                                        </span>
+                                    </p>
+                                </div>
+
+                                <!-- RIGHT -->
+                                <div class="flex flex-col gap-1">
+
+                                    <p v-if="task.task.start_date">
+                                        <i class="pi pi-calendar-plus mr-1"></i>
+                                        Start Date:
+                                        <span>
+                                            {{ formatDate(task.task.start_date) }}
+                                        </span>
+                                    </p>
+
+                                    <p v-if="task.assigned_at">
+                                        <i class="pi pi-clock mr-1"></i>
+                                        Assigned At:
+                                        <span>
+                                            {{ formatDateBD(task.assigned_at) }}
+                                        </span>
+                                    </p>
+
+                                    <p v-if="task.completed_at">
+                                        <i class="pi pi-check-circle mr-1"></i>
+                                        Completed At:
+                                        <span>
+                                            {{ formatDateBD(task.completed_at) }}
+                                        </span>
+                                    </p>
+
+                                </div>
+                            </div>
+
+                            <div class="flex justify-end mt-3">
+                                <Button label="Details" icon="pi pi-eye" outlined severity="secondary"
+                                    class="!text-sm !px-3 !py-1.5" @click="openDetails(task)" />
+                            </div>
+                        </div>
+
+                        <div v-if="filteredTasks(allStaffTasks).filter(t => t.staff_decision === 'Declined Trash').length === 0"
+                            class="text-center py-6 text-gray-500 italic">
+                            No Declined Trash tasks.
                         </div>
                     </div>
                 </div>
@@ -3181,11 +4078,11 @@ const submitDecline = async () => {
                                     <!-- Right Side (Dates + Hours) -->
                                     <div class="flex flex-col gap-2">
                                         <div class="flex items-center gap-2">
-                                            <i class="fa-solid fa-calendar"></i>
+                                            <i class="pi pi-calendar-plus mr-1"></i>
                                             <p>
                                                 Client Project Start Date:
                                                 <span :class="!task.task.start_date ? 'text-gray-400 italic' : ''">
-                                                    {{ formatDateBD(task.task.start_date) || 'Not Provided' }}
+                                                    {{ formatDate(task.task.start_date) || 'Not Provided' }}
                                                 </span>
                                             </p>
                                         </div>
@@ -3219,8 +4116,7 @@ const submitDecline = async () => {
 
             <!-- Notes Modal -->
             <Dialog v-model:visible="showNotes" header="Task Notes" :modal="true"
-                class="w-full sm:w-3/5 md:w-1/2 lg:w-2/5 p-0 rounded-xl shadow-xl overflow-hidden"
-                :closable="true">
+                class="w-full sm:w-3/5 md:w-1/2 lg:w-2/5 p-0 rounded-xl shadow-xl overflow-hidden" :closable="true">
 
                 <!-- Notes List -->
                 <div class="space-y-3 max-h-96 overflow-y-auto p-4 bg-gray-50">
@@ -3233,14 +4129,33 @@ const submitDecline = async () => {
                                 <span class="font-semibold text-indigo-600">{{ note.user.name }}:</span>
                                 {{ note.note }}
                             </p>
-                            <small class="text-gray-400 italic text-xs mt-1 block">
+                            <small class="text-gray-500 italic text-xs font-medium mt-1 block">
                                 {{ formatDateBD(note.created_at) }}
                             </small>
                         </div>
 
                         <!-- Mark as Read -->
-                        <Button v-if="!note.is_read" icon="pi pi-check" class="!text-xs text-indigo-600 hover:bg-indigo-50"
-                            text @click="markAsRead(note.id)" title="Mark as read" />
+                        <button v-if="!note.is_read" @click="markAsRead(note.id)" title="Mark as read" class="w-7 h-7 flex items-center justify-center
+                            bg-indigo-100 text-indigo-600 rounded-full
+                            hover:bg-indigo-200 hover:text-indigo-800
+                            transition shadow-sm">
+                            <i class="fa-solid fa-check text-xs"></i>
+                        </button>
+                    </div>
+
+                    <!-- Mark All as Read -->
+                    <div v-if="taskNotes.some(note => !note.is_read)"
+                        class="flex justify-end">
+
+                        <button
+                            @click="markAllAsRead"
+                            class="flex items-center gap-2 px-4 text-sm font-semibold
+                                text-indigo-700 rounded-lg hover:text-indigo-900
+                                transition-all duration-200 cursor-pointer"
+                        >
+                            <i class="fa-solid fa-check-double"></i>
+                            Mark All as Read
+                        </button>
                     </div>
 
                     <!-- Empty State -->
@@ -3256,21 +4171,35 @@ const submitDecline = async () => {
                     <Button label="Add" icon="pi pi-plus" severity="success" class="!px-6 !py-2 rounded-lg"
                         @click="addNote" />
                 </div>
+            </Dialog>
 
-                <!-- Mark All as Read -->
-                <div v-if="taskNotes.some(note => !note.is_read)" class="flex justify-end p-4 border-t border-gray-200 bg-white">
-                    <Button label="Mark All as Read" icon="pi pi-check-circle" text class="text-sm text-indigo-600 hover:text-indigo-800"
-                        @click="markAllAsRead" />
+            <!-- Approved Note Modal -->
+            <Dialog v-model:visible="showApproveModal" header="Approve Task" modal :style="{ width: '30rem' }">
+                <Textarea v-model="approveNote" rows="4" placeholder="Write approval note..." class="w-full"/>
+
+                <div class="flex justify-end gap-2 mt-3">
+                    <Button label="Cancel" severity="secondary" @click="showApproveModal = false" />
+                    <Button label="Submit" severity="success" @click="submitApprove" />
                 </div>
             </Dialog>
 
             <!-- Declined Note Modal -->
-            <Dialog v-model:visible="showDeclineModal" header="Decline Task" modal>
-                <Textarea v-model="declineNote" rows="4" placeholder="Write decline reason..." />
+            <Dialog v-model:visible="showDeclineModal" header="Decline Task" modal :style="{ width: '30rem' }">
+                <Textarea v-model="declineNote" rows="4" placeholder="Write decline reason..." class="w-full" />
 
                 <div class="flex justify-end gap-2 mt-3">
-                    <Button label="Cancel" severity="secondary" @click="showDeclineModal=false"/>
-                    <Button label="Submit" severity="danger" @click="submitDecline"/>
+                    <Button label="Cancel" severity="secondary" @click="showDeclineModal = false" />
+                    <Button label="Submit" severity="danger" @click="submitDecline" />
+                </div>
+            </Dialog>
+
+            <!-- Declined Trash Note Modal -->
+            <Dialog v-model:visible="showDeclinedTrashModal" modal header="Declined Trash Note" :style="{ width: '30rem' }">
+                <Textarea v-model="declinedTrashNote" rows="4" placeholder="Enter trash reason..." class="w-full" />
+
+                <div class="flex justify-end gap-2 mt-4">
+                    <Button label="Cancel" severity="secondary" @click="showDeclinedTrashModal = false" />
+                    <Button label="Submit Trash" severity="danger" @click="submitDeclinedTrash" />
                 </div>
             </Dialog>
 
@@ -3304,6 +4233,7 @@ const submitDecline = async () => {
                             'text-indigo-800': selectedTask.status === 'Future',
                             'text-orange-800': selectedTask.status === 'Staff',
                         }" class="text-xl font-bold">
+                            <span>Title :</span>
                             {{ selectedTask.task.title }}
                         </h2>
 
@@ -3325,7 +4255,7 @@ const submitDecline = async () => {
                     <!-- Shop -->
                     <div class="flex items-center gap-2">
                         <i class="pi pi-building text-gray-600"></i>
-                        <p class="text-gray-700"><strong>Shop:</strong> {{ selectedTask.task.shop_name }}</p>
+                        <p class="text-gray-700"><strong>Shop Client:</strong> {{ selectedTask.task.shop_name }}</p>
                     </div>
 
                     <!-- Start Date -->
@@ -3402,6 +4332,24 @@ const submitDecline = async () => {
 
                         <!-- Show general approved_note -->
                         <p v-if="selectedTask.decline_note" class="text-gray-700">{{ selectedTask.decline_note }}
+                        </p>
+                    </div>
+
+                    <div v-if="selectedTask.approve_note || (userRole === 'staff' && selectedTask.task?.approve_note)"
+                        class="bg-white/70 border-l-4 border-green-500 p-3 rounded mt-2">
+                        <p class="text-green-800 font-medium"><strong>Approved Comment:</strong></p>
+
+                        <!-- Show general approved_note -->
+                        <p v-if="selectedTask.approve_note" class="text-gray-700">{{ selectedTask.approve_note }}
+                        </p>
+                    </div>
+
+                    <div v-if="selectedTask.declined_trash_note || (userRole === 'staff' && selectedTask.task?.declined_trash_note)"
+                        class="bg-white/70 border-l-4 border-red-500 p-3 rounded mt-2">
+                        <p class="text-red-800 font-medium"><strong>Declined Trash Note:</strong></p>
+
+                        <!-- Show general declined_trash_note -->
+                        <p v-if="selectedTask.declined_trash_note" class="text-gray-700">{{ selectedTask.declined_trash_note }}
                         </p>
                     </div>
 
@@ -3648,7 +4596,7 @@ const submitDecline = async () => {
                             <div class="bg-white p-4 rounded-lg shadow hover:shadow-md transition">
                                 <div class="flex justify-between items-center mb-2">
                                     <span class="text-sm text-gray-500">{{ new Date(item.created_at).toLocaleString()
-                                        }}</span>
+                                    }}</span>
 
                                     <span class="text-sm font-semibold text-blue-600">
                                         {{ getStaffName(item.staff_id) }}
@@ -3700,6 +4648,7 @@ const submitDecline = async () => {
             </Dialog>
 
         </div>
+        </template>
     </AppLayout>
 </template>
 

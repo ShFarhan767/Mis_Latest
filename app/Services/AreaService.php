@@ -18,9 +18,9 @@ class AreaService
         return $this->repo->all();
     }
 
-    public function store($data)
+    public function store(array $data, $userId)
     {
-        return $this->repo->store($data);
+        return $this->repo->store($data, $userId);
     }
 
     public function update($id, $data)

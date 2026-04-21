@@ -2,12 +2,13 @@
 
 namespace App\Http\Middleware;
 
+use App\Models\Logo;
+use Illuminate\Foundation\Inspiring;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Inertia\Inertia;
 use Inertia\Middleware;
 use Tighten\Ziggy\Ziggy;
-use Illuminate\Http\Request;
-use Illuminate\Foundation\Inspiring;
-use Illuminate\Support\Facades\Auth;
 
 class HandleInertiaRequests extends Middleware
 {
@@ -45,6 +46,8 @@ class HandleInertiaRequests extends Middleware
         // Get the authenticated user from the active guard
         $user = $guard ? Auth::guard($guard)->user() : null;
 
+        $branding = Logo::latest()->first();
+
         return [
             ...parent::share($request),
 
@@ -59,6 +62,8 @@ class HandleInertiaRequests extends Middleware
                 'user' => $user,
                 'guard' => $guard,
             ],
+
+            'branding' => $branding, // ✅ now actually shared
 
             // ✅ Include Ziggy for route() support in Vue
             'ziggy' => [

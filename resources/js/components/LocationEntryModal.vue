@@ -39,6 +39,17 @@ const statuses = [
     { label: 'Disabled', value: 'Disabled' }
 ];
 
+const currentUser = ref<any | null>(null);
+
+const fetchCurrentUser = async () => {
+    try {
+        const { data } = await axios.get('/api/current-user');
+        currentUser.value = data;
+    } catch { }
+};
+
+onMounted(() => fetchCurrentUser());
+
 const countryOptions = ref<any[]>([]);
 const areaList = ref<any[]>([]);
 
@@ -64,7 +75,8 @@ const fetchAreas = async () => {
             id: a.id,
             name: a.area_name,
             country: a.country_name,
-            status: a.status
+            status: a.status,
+            created_by: a.created_by
         }));
     } catch (error) {
         toast.add({ severity: 'error', summary: 'Error', detail: 'Failed to fetch areas', life: 3000 });
@@ -118,10 +130,18 @@ const saveOrUpdate = async () => {
                 country: data.country_name,
                 status: data.status
             });
+
+            // 🔥 notify parent
+            emit('created', {
+                area_name: data.area_name,
+                country_name: data.country_name
+            });
+
             toast.add({ severity: 'success', summary: 'Created', detail: 'Area added', life: 3000 });
         }
 
         clearForm();
+        fetchAreas();
         visibleModel.value = false;
     } catch (error: any) {
         toast.add({ severity: 'error', summary: 'Error', detail: error.response?.data?.message || 'Failed to save area', life: 3000 });
@@ -221,8 +241,8 @@ watch(visibleModel, (val) => {
             </div>
 
             <!-- DataTable -->
-            <DataTable title="Areas" :columns="columns" :rows="tableRows" :onEdit="editArea" :onDelete="deleteArea"
-                :showSearch="true" />
+            <DataTable :columns="columns" :rows="tableRows" :onEdit="editArea" :onDelete="deleteArea"
+                :rowDisabled="row => currentUser?.role === 'staff' && row.created_by !== currentUser?.id" />
         </div>
     </Dialog>
 </template>

@@ -26,7 +26,6 @@ defineProps<{
                 :href="dashboard()"
                 class="relative z-20 flex items-center text-lg font-medium"
             >
-                <AppLogoIcon class="mr-2 size-8 fill-current text-white" />
                 <!-- {{ name }} -->
             </Link>
             <!-- <div v-if="quote" class="relative z-20 mt-auto">
@@ -42,6 +41,11 @@ defineProps<{
             <div
                 class="mx-auto flex w-full flex-col justify-center space-y-2 sm:w-[400px]"
             >
+
+            <div class=" h-20 w-full flex justify-center items-center">
+                <AppLogoIcon class="mr-2 size-8 fill-current text-white" />
+            </div>
+
                 <div class="flex flex-col space-y-2 text-center">
                     <h1 class="text-xl font-medium tracking-tight" v-if="title">
                         {{ title }}

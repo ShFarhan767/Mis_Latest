@@ -18,7 +18,7 @@ return new class extends Migration
             $table->string('mobile')->nullable();
             $table->string('designation')->nullable();
             $table->string('code', 4)->unique(); // 4-digit unique code
-            $table->enum('role', ['user', 'admin', 'employee'])->default('user');
+            $table->enum('role', ['staff', 'admin', 'employee', 'demo_presenter'])->default('employee');
             $table->enum('status', ['Running', 'Suspend', 'Disable'])->default('Running'); // 👈 added
             $table->timestamp('email_verified_at')->nullable();
             $table->string('password');

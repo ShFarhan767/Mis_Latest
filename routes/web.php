@@ -27,15 +27,43 @@ Route::middleware(['auth', 'admin'])->group(function () {
     Route::get('/admin/dashboard', fn() => Inertia::render('Backend/AdminDashboard'))->name('admin.dashboard');
 
     // HomePage Data Entry Routes
-    Route::get('/staffCreate', fn() => Inertia::render('Backend/StaffCreate'))->name('staffCreate');
+    Route::get('/staffCreate', function () {
+        $user = Auth::user(); // get logged-in user
+        return Inertia::render('Backend/StaffCreate', [
+            'userRole' => $user->role,  // e.g., 'admin' or 'employee'
+            'userId'   => $user->id,    // logged-in user ID
+        ]);
+    })->name('staffCreate');
     Route::get('/areaCreate', fn() => Inertia::render('Backend/AreaNameEntry'))->name('areaCreate');
     Route::get('/leadSourceCreate', fn() => Inertia::render('Backend/LeadSourceEntry'))->name('leadSourceCreate');
     Route::get('/shopTypeCreate', fn() => Inertia::render('Backend/ShopTypeEntry'))->name('shopTypeCreate');
     Route::get('/serviceTypeCreate', fn() => Inertia::render('Backend/ServiceTypeEntry'))->name('serviceTypeCreate');
-    Route::get('/employeeCreate', fn() => Inertia::render('Backend/EmployeeCreate'))->name('employeeCreate');
+    Route::get('/employeeCreate', function () {
+        $user = Auth::user(); // get logged-in user
+        return Inertia::render('Backend/EmployeeCreate', [
+            'userRole' => $user->role,  // 'admin' or 'employee'
+            'userId'   => $user->id,    // logged-in user ID
+        ]);
+    })->name('employeeCreate');
+    Route::get('/presenterCreate', function () {
+        $user = Auth::user(); // get logged-in user
+        return Inertia::render('Backend/DemoPresenterCreate', [
+            'userRole' => $user->role,  // 'admin' or 'employee'
+            'userId'   => $user->id,    // logged-in user ID
+        ]);
+    })->name('presenterCreate');
     Route::get('/clientManagement', fn() => Inertia::render('Backend/ClientManage'))->name('clientManagement');
     Route::get('/clientList', fn() => Inertia::render('Backend/ClientList'))->name('clientList');
     Route::get('/customer-assign', fn() => Inertia::render('Backend/CustomerAssign'))->name('customerAssign');
+
+    // Website Configuration Routes
+    Route::get('/logo-upload', fn() => Inertia::render('Backend/LogoUpload'))->name('logoUpload');
+
+    // Lists (read-only)
+    Route::get('/employeeList', fn() => Inertia::render('Backend/EmployeeList'))->name('employeeList');
+    Route::get('/staffList', fn() => Inertia::render('Backend/StaffList'))->name('staffList');
+    Route::get('/clientListSimple', fn() => Inertia::render('Backend/ClientListSimple'))->name('clientListSimple');
+    Route::get('/areaList', fn() => Inertia::render('Backend/AreaList'))->name('areaList');
 });
 
 Route::get('/login', function () {
@@ -45,14 +73,6 @@ Route::get('/login', function () {
 })->name('employee.login');
 
 Route::post('/employee/login', [EmployeeController::class, 'login'])->name('employee.login.store');
-
-Route::prefix('/api/employees')->group(function () {
-    Route::get('/', [EmployeeController::class, 'index']);
-    Route::post('/', [EmployeeController::class, 'store']);
-    Route::get('/{employee}', [EmployeeController::class, 'show']);
-    Route::put('/{employee}', [EmployeeController::class, 'update']);
-    Route::delete('/{employee}', [EmployeeController::class, 'destroy']);
-});
 
 Route::middleware(['auth', 'admin_or_staff'])->group(function () {
 

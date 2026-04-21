@@ -12,15 +12,29 @@
         }
     </style>
 
-    <title inertia>{{ config('app.name', 'Laravel') }}</title>
+    @php
+        use App\Models\Logo;
+        $branding = Logo::latest()->first(); // get last saved logo row
+        $favicon = $branding?->favicon_path;
+        $title = $branding?->title ?? 'MIS Doofaz Project';
+    @endphp
+
+    @if($title)
+        <title >{{ $title }}</title>
+    @else
+        <title inertia>{{ config('app.name', 'MIS Doofaz Project') }}</title>
+    @endif
 
     <!-- JPG favicon -->
     <link rel="icon" href="/favicon.jpg" type="image/jpg">
 
     <!-- Optional: keep other formats if needed -->
-    <link rel="icon" href="/favicon.jpg" sizes="any">
-    <link rel="icon" href="/favicon.jpg">
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+    @if($favicon)
+        <link rel="icon" href="/{{ $favicon }}" type="image/png">
+        <link rel="apple-touch-icon" href="/{{ $favicon }}">
+    @else
+        <link rel="icon" href="/favicon.png" type="image/png">
+    @endif
 
     {{-- <script type="module" src="/build/assets/app-DOWpu1kq.js"></script>
     <link rel="stylesheet" href="/build/assets/app-Du55OHaZ.css"> --}}

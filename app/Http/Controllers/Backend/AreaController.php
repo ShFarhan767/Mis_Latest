@@ -3,9 +3,10 @@
 namespace App\Http\Controllers\Backend;
 
 use App\Http\Controllers\Controller;
-use Illuminate\Http\Request;
 use App\Http\Requests\AreaRequest;
 use App\Services\AreaService;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 
 class AreaController extends Controller
 {
@@ -23,7 +24,11 @@ class AreaController extends Controller
 
     public function store(AreaRequest $request)
     {
-        return response()->json($this->service->store($request->validated()));
+        $userId = Auth::id(); // get logged-in user id
+
+        return response()->json(
+            $this->service->store($request->validated(), $userId)
+        );
     }
 
     public function update(AreaRequest $request, $id)

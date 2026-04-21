@@ -58,16 +58,16 @@ class EmployeeController extends Controller
         $credentials = $request->only('mobile', 'password');
 
         $employee = User::where('mobile', $credentials['mobile'])
-                                    ->where('status', 'running') // only allow running employees
+                                    ->where('status', 'Running') // only allow running employees
                                     ->first();
 
         if (!$employee || !Hash::check($credentials['password'], $employee->password)) {
             // You can customize the message if employee exists but status is not running
             $statusMessage = '';
             $existingEmployee = User::where('mobile', $credentials['mobile'])
-                                    ->where('status', '!=', 'running')
+                                    ->where('status', '!=', 'Running')
                                     ->first();
-            if ($existingEmployee && $existingEmployee->status !== 'running') {
+            if ($existingEmployee && $existingEmployee->status !== 'Running') {
                 $statusMessage = 'Your account is ' . $existingEmployee->status . '. You cannot login.';
             }
 
@@ -82,3 +82,4 @@ class EmployeeController extends Controller
         return redirect()->route('dashboard');
     }
 }
+

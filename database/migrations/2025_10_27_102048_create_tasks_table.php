@@ -30,14 +30,15 @@ return new class extends Migration
                 'Reissue',
                 'Staff',
             ])->default('New');
-            $table->enum('staff_decision', ['Pending', 'Approved', 'Declined'])->default('Pending');
+            $table->enum('staff_decision', ['Pending', 'Approved', 'Declined' ,'Declined Trash'])->default('Pending');
             $table->text('decline_note')->nullable();
+            $table->text('approve_note')->nullable();
             $table->text('reissue_comment')->nullable();
             $table->text('complete_note')->nullable();
             $table->text('cancelled_note')->nullable();
             $table->text('approved_note')->nullable();
+            $table->text('declined_trash_note')->nullable();
 
-            $table->foreign('shop_id')->references('id')->on('clients')->onDelete('set null');
             $table->foreignId('created_by')->nullable()->constrained('users')->nullOnDelete();
             $table->timestamps();
         });
