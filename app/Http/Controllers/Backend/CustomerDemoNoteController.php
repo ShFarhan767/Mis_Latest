@@ -23,7 +23,13 @@ class CustomerDemoNoteController extends Controller
         }
 
         if ($user->role === 'demo_presenter') {
-            return (int)$customer->demo_presenter_id === (int)$user->id;
+            // Allow access if currently assigned OR if the presenter already participated in the thread.
+            if ((int)$customer->demo_presenter_id === (int)$user->id) return true;
+
+            return CustomerDemoNote::query()
+                ->where('customer_id', $customer->id)
+                ->where('user_id', (int)$user->id)
+                ->exists();
         }
 
         return false;

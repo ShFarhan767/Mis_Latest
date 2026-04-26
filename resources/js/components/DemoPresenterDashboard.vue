@@ -1,28 +1,76 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from "vue";
+import { ref, computed, onMounted, watch, nextTick } from "vue";
 import axios from "axios";
 import Toast from "primevue/toast";
 import { useToast } from "primevue/usetoast";
 import Dialog from "primevue/dialog";
+import Calendar from "primevue/calendar";
 
 const toast = useToast();
 
 const loading = ref(false);
 const customers = ref<any[]>([]);
 
-const activeTab = ref<"All" | "Pending" | "Done">("All");
+const activeTab = ref<"All" | "Pending" | "Done" | "Cancelled">("All");
 const searchQuery = ref("");
+const filterAssignedMonth = ref<Date | null>(null);
 
 // Status update modal
 const showStatusDialog = ref(false);
 const statusCustomer = ref<any | null>(null);
-const selectedDemoStatus = ref<"Pending" | "Done">("Pending");
+const selectedDemoStatus = ref<"Pending" | "Done" | "Cancelled">("Pending");
 const statusNote = ref("");
 
-// Details modal (includes tabs: info/history/notes)
+// Details modal (info/history)
 const showDetailsDialog = ref(false);
 const detailsCustomer = ref<any | null>(null);
-const detailsTab = ref<"info" | "history" | "notes">("info");
+const detailsTab = ref<"info" | "history">("info");
+
+// Notes modal (chat)
+const showNotesDialog = ref(false);
+const notesCustomer = ref<any | null>(null);
+const notesScrollEl = ref<HTMLElement | null>(null);
+const notesPollTimer = ref<ReturnType<typeof setInterval> | null>(null);
+const lastSeenNoteId = ref<number>(0);
+const audioCtx = ref<AudioContext | null>(null);
+
+const ensureAudioUnlocked = async () => {
+    try {
+        if (!audioCtx.value) {
+            const Ctx = (window as any).AudioContext || (window as any).webkitAudioContext;
+            if (!Ctx) return;
+            audioCtx.value = new Ctx();
+        }
+        if (audioCtx.value?.state === "suspended") await audioCtx.value.resume();
+    } catch {
+        // ignore autoplay restrictions
+    }
+};
+
+const playNotifySound = async () => {
+    await ensureAudioUnlocked();
+    const ctx = audioCtx.value;
+    if (!ctx) return;
+
+    const oscillator = ctx.createOscillator();
+    const gain = ctx.createGain();
+    oscillator.type = "sine";
+    oscillator.frequency.value = 880;
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.12, ctx.currentTime + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.18);
+    oscillator.connect(gain);
+    gain.connect(ctx.destination);
+    oscillator.start();
+    oscillator.stop(ctx.currentTime + 0.2);
+};
+
+const stopNotesPolling = () => {
+    if (notesPollTimer.value) {
+        clearInterval(notesPollTimer.value);
+        notesPollTimer.value = null;
+    }
+};
 
 // History timeline
 const historyLoading = ref(false);
@@ -129,17 +177,16 @@ const formatDate = (date: string | null) => {
     return new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short", year: "numeric" }).format(d);
 };
 
-const formatDateTime = (date: string | null) => {
-    if (!date) return "-";
-    const d = new Date(date);
-    if (isNaN(d.getTime())) return "-";
-    return new Intl.DateTimeFormat("en-GB", {
-        day: "2-digit",
-        month: "short",
-        year: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-    }).format(d);
+const formatDateTime = (dateStr: string) => {
+    const date = new Date(dateStr);
+    return date.toLocaleString('en-GB', {
+        day: 'numeric',       // 4
+        month: 'long',        // March
+        year: 'numeric',      // 2026
+        hour: 'numeric',      // 2
+        minute: '2-digit',    // 30
+        hour12: true          // PM
+    });
 };
 
 const formatTime = (iso: string) => {
@@ -165,17 +212,21 @@ const initials = (name: string) => {
 
 const isLocked = (row: any) => {
     if (!row) return false;
-    return (row.demo_status ?? "Pending") === "Done" || !!row.demo_done_at;
+    return ["Done", "Cancelled"].includes(row.demo_status ?? "Pending") || !!row.demo_done_at;
 };
 
-const demoStatusPillClass = (status: string) => {
+const demoStatusPillClass = (status: string | null) => {
     if (status === "Done") return "bg-emerald-100 text-emerald-700 ring-1 ring-emerald-200";
-    return "bg-blue-100 text-blue-700 ring-1 ring-blue-200";
+    if (status === "Cancelled") return "bg-rose-100 text-rose-700 ring-1 ring-rose-200";
+    if (status === "Pending") return "bg-blue-100 text-blue-700 ring-1 ring-blue-200";
+    return "bg-slate-100 text-slate-700 ring-1 ring-slate-200";
 };
 
-const demoStatusStripeClass = (status: string) => {
+const demoStatusStripeClass = (status: string | null) => {
     if (status === "Done") return "from-emerald-500 to-emerald-300";
-    return "from-blue-500 to-indigo-400";
+    if (status === "Cancelled") return "from-rose-500 to-rose-300";
+    if (status === "Pending") return "from-blue-500 to-indigo-400";
+    return "from-slate-500 to-slate-300";
 };
 
 const tableRows = computed(() =>
@@ -195,7 +246,7 @@ const tableRows = computed(() =>
         last_contact_date: c.last_contact_date ?? null,
         staff_status: c.staff_status ?? "-",
         assigned_staff: c.assigned_staff ?? c.assignedStaff ?? null,
-        demo_status: c.demo_status ?? "Pending",
+        demo_status: c.demo_status ?? null,
         demo_done_at: c.demo_done_at ?? null,
         demo_notes_unread: c.demo_notes_unread ?? 0,
         demo_presenter_id: c.demo_presenter_id ?? null,
@@ -209,17 +260,44 @@ const tableRows = computed(() =>
     }))
 );
 
-const total = computed(() => tableRows.value.length);
-const pendingCount = computed(
-    () => tableRows.value.filter((r: any) => (r.demo_status ?? "Pending") === "Pending").length
-);
-const doneCount = computed(() => tableRows.value.filter((r: any) => (r.demo_status ?? "Pending") === "Done").length);
-
-const searchFilteredRows = computed(() => {
-    const q = searchQuery.value.trim().toLowerCase();
-    if (!q) return tableRows.value;
+const monthFilteredRows = computed(() => {
+    if (!filterAssignedMonth.value) return tableRows.value;
+    const month = new Date(filterAssignedMonth.value);
 
     return tableRows.value.filter((r: any) => {
+        const assignedAt = getAssignedForDemoAt(r.id);
+        if (!assignedAt) return false;
+        const d = new Date(assignedAt);
+        if (isNaN(d.getTime())) return false;
+        return d.getFullYear() === month.getFullYear() && d.getMonth() === month.getMonth();
+    });
+});
+
+const total = computed(() => monthFilteredRows.value.filter((r: any) => r.demo_status === null).length);
+const pendingCount = computed(
+    () => monthFilteredRows.value.filter((r: any) => r.demo_status === "Pending").length
+);
+const doneCount = computed(() => monthFilteredRows.value.filter((r: any) => r.demo_status === "Done").length);
+const cancelledCount = computed(
+    () => monthFilteredRows.value.filter((r: any) => r.demo_status === "Cancelled").length
+);
+
+const searchFilteredRows = computed(() => {
+    const month = filterAssignedMonth.value ? new Date(filterAssignedMonth.value) : null;
+    const q = searchQuery.value.trim().toLowerCase();
+    const base = month
+        ? tableRows.value.filter((r: any) => {
+              const assignedAt = getAssignedForDemoAt(r.id);
+              if (!assignedAt) return false;
+              const d = new Date(assignedAt);
+              if (isNaN(d.getTime())) return false;
+              return d.getFullYear() === month.getFullYear() && d.getMonth() === month.getMonth();
+          })
+        : tableRows.value;
+
+    if (!q) return base;
+
+    return base.filter((r: any) => {
         const haystack = [
             r.name,
             r.numbers,
@@ -238,22 +316,25 @@ const searchFilteredRows = computed(() => {
 });
 
 const filteredRows = computed(() => {
-    if (activeTab.value === "All") return searchFilteredRows.value;
-    return searchFilteredRows.value.filter((r: any) => (r.demo_status ?? "Pending") === activeTab.value);
+    if (activeTab.value === "All") return searchFilteredRows.value.filter((r: any) => r.demo_status === null);
+    return searchFilteredRows.value.filter((r: any) => r.demo_status === activeTab.value);
 });
 
 const openStatus = (row: any) => {
     if (isLocked(row)) {
+        const status = row?.demo_status ?? "Assigned";
         toast.add({
             severity: "info",
             summary: "Locked",
-            detail: "This demo is already marked Done and cannot be updated.",
+            detail: `This demo is already marked ${status} and cannot be updated.`,
             life: 2500,
         });
         return;
     }
     statusCustomer.value = row;
-    selectedDemoStatus.value = (row.demo_status ?? "Pending") === "Done" ? "Done" : "Pending";
+    selectedDemoStatus.value = ["Done", "Cancelled"].includes(row.demo_status ?? "Pending")
+        ? (row.demo_status ?? "Pending")
+        : "Pending";
     statusNote.value = "";
     showStatusDialog.value = true;
 };
@@ -308,17 +389,55 @@ const fetchHistory = async (customerId: number) => {
     }
 };
 
-const fetchNotes = async (customerId: number) => {
-    notesLoading.value = true;
+const fetchNotes = async (
+    customerId: number,
+    opts?: { playSound?: boolean; silent?: boolean; markRead?: boolean }
+) => {
+    const silent = opts?.silent ?? false;
+    const markRead = opts?.markRead ?? true;
+    if (!silent) notesLoading.value = true;
     try {
+        const prevMaxId = lastSeenNoteId.value || 0;
         const { data } = await axios.get(`/api/customers/${customerId}/demo-notes`);
-        notes.value = Array.isArray(data?.notes) ? data.notes : [];
-        await axios.put(`/api/customers/${customerId}/demo-notes/mark-read`);
+        const incoming = Array.isArray(data?.notes) ? data.notes : [];
+        notes.value = incoming;
+        if (markRead) {
+            try {
+                await axios.put(`/api/customers/${customerId}/demo-notes/mark-read`);
+            } catch {
+                // Don't block chat rendering if mark-read fails.
+            }
+        }
 
         const idx = customers.value.findIndex((c: any) => c.id === customerId);
         if (idx !== -1) customers.value[idx].demo_notes_unread = 0;
         if (detailsCustomer.value?.id === customerId) detailsCustomer.value.demo_notes_unread = 0;
+        if (notesCustomer.value?.id === customerId) notesCustomer.value.demo_notes_unread = 0;
+
+        const maxId = incoming.reduce((m: number, n: any) => Math.max(m, Number(n?.id || 0)), 0);
+        const hasNewFromOther =
+            (opts?.playSound ?? false) &&
+            maxId > prevMaxId &&
+            incoming.some((n: any) => Number(n?.id || 0) > prevMaxId && n?.user_id !== currentUser.value?.id);
+
+        lastSeenNoteId.value = Math.max(prevMaxId, maxId);
+        if (hasNewFromOther) void playNotifySound();
+
+        await nextTick();
+        if (notesScrollEl.value) notesScrollEl.value.scrollTop = notesScrollEl.value.scrollHeight;
     } catch (error: any) {
+        if (silent) return;
+
+        if (error?.response?.status === 403) {
+            toast.add({
+                severity: "error",
+                summary: "Forbidden",
+                detail: "You don't have permission to view these demo notes.",
+                life: 3000,
+            });
+            return;
+        }
+
         toast.add({
             severity: "error",
             summary: "Error",
@@ -327,15 +446,15 @@ const fetchNotes = async (customerId: number) => {
         });
         notes.value = [];
     } finally {
-        notesLoading.value = false;
+        if (!silent) notesLoading.value = false;
     }
 };
 
 const isMine = (note: any) => currentUser.value?.id && note?.user_id === currentUser.value.id;
 
 const send = async () => {
-    if (!detailsCustomer.value?.id) return;
-    const customerId = detailsCustomer.value.id;
+    if (!notesCustomer.value?.id) return;
+    const customerId = notesCustomer.value.id;
     const text = message.value.trim();
     if (!text) return;
 
@@ -345,6 +464,9 @@ const send = async () => {
         if (data?.note) notes.value.push(data.note);
         message.value = "";
         await axios.put(`/api/customers/${customerId}/demo-notes/mark-read`);
+        lastSeenNoteId.value = Math.max(lastSeenNoteId.value || 0, Number(data?.note?.id || 0));
+        await nextTick();
+        if (notesScrollEl.value) notesScrollEl.value.scrollTop = notesScrollEl.value.scrollHeight;
     } catch (error: any) {
         toast.add({
             severity: "error",
@@ -357,15 +479,30 @@ const send = async () => {
     }
 };
 
-const openDetails = async (row: any, tab: "info" | "history" | "notes" = "info") => {
+const openDetails = async (row: any, tab: "info" | "history" = "info") => {
     detailsCustomer.value = row;
     detailsTab.value = tab;
     showDetailsDialog.value = true;
-    message.value = "";
-    notes.value = [];
     historyData.value = [];
     await fetchCurrentUser();
-    await Promise.all([fetchNotes(row.id), fetchHistory(row.id)]);
+    await fetchHistory(row.id);
+};
+
+const openNotes = async (row: any) => {
+    notesCustomer.value = row;
+    showNotesDialog.value = true;
+    message.value = "";
+    notes.value = [];
+    lastSeenNoteId.value = 0;
+    await fetchCurrentUser();
+    await fetchNotes(row.id, { playSound: false, silent: false, markRead: true });
+    await ensureAudioUnlocked();
+
+    stopNotesPolling();
+    notesPollTimer.value = setInterval(() => {
+        if (!notesCustomer.value?.id) return;
+        void fetchNotes(notesCustomer.value.id, { playSound: true, silent: true, markRead: false });
+    }, 3000);
 };
 
 watch(
@@ -374,8 +511,6 @@ watch(
         if (!v) {
             detailsCustomer.value = null;
             detailsTab.value = "info";
-            message.value = "";
-            notes.value = [];
             historyData.value = [];
             assignedForDemoAt.value = null;
             assignedForDemoBy.value = null;
@@ -383,14 +518,31 @@ watch(
     }
 );
 
+watch(
+    () => showNotesDialog.value,
+    (v) => {
+        if (!v) {
+            stopNotesPolling();
+            notesCustomer.value = null;
+            message.value = "";
+            notes.value = [];
+            notesLoading.value = false;
+            sending.value = false;
+        }
+    }
+);
+
 const saveDemoStatus = async () => {
     if (!statusCustomer.value) return;
 
-    if (selectedDemoStatus.value === "Done" && !statusNote.value.trim()) {
+    if (["Done", "Cancelled"].includes(selectedDemoStatus.value) && !statusNote.value.trim()) {
         toast.add({
             severity: "warn",
             summary: "Note Required",
-            detail: "Please write a note before marking demo as Done.",
+            detail:
+                selectedDemoStatus.value === "Cancelled"
+                    ? "Please write why this demo was cancelled."
+                    : "Please write a note before marking demo as Done.",
             life: 3000,
         });
         return;
@@ -444,6 +596,15 @@ const formatHistoryValue = (value: any) => {
     }
 
     return String(value);
+};
+
+const historyEntries = (oldData: any): Array<[string, any]> => {
+    return Object.entries(oldData ?? {}).filter(([, value]) => {
+        if (value === null || value === undefined || value === "") return false;
+        if (Array.isArray(value) && value.length === 0) return false;
+        if (typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === 0) return false;
+        return true;
+    });
 };
 
 const getAssignedForDemoAt = (customerId: number) => demoAssignedAtMap.value[customerId] ?? null;
@@ -516,9 +677,35 @@ const getAssignedForDemoBy = (customerId: number) => demoAssignedByMap.value[cus
                         <i class="pi pi-check mr-2" />
                         Done <span class="ml-1 text-xs opacity-80">({{ doneCount }})</span>
                     </button>
+
+                    <button
+                        class="px-4 py-2 rounded-full text-sm font-semibold transition"
+                        :class="activeTab === 'Cancelled' ? 'bg-rose-600 text-white' : 'bg-rose-50 text-rose-700 hover:bg-rose-100'"
+                        @click="activeTab = 'Cancelled'"
+                        type="button"
+                    >
+                        <i class="pi pi-times-circle mr-2" />
+                        Cancelled <span class="ml-1 text-xs opacity-80">({{ cancelledCount }})</span>
+                    </button>
                 </div>
 
-                <div class="lg:col-span-5">
+                <div class="lg:col-span-3">
+                    <label class="text-sm font-medium mb-1 text-slate-700 block">
+                        <i class="pi pi-calendar mr-2" />
+                        Assigned Month
+                    </label>
+                    <Calendar
+                        v-model="filterAssignedMonth"
+                        view="month"
+                        dateFormat="mm/yy"
+                        showIcon
+                        showButtonBar
+                        class="w-full"
+                        placeholder="Pick month"
+                    />
+                </div>
+
+                <div class="lg:col-span-2">
                     <label class="text-sm font-medium mb-1 text-slate-700 block">
                         <i class="pi pi-search mr-2" />
                         Search
@@ -533,6 +720,14 @@ const getAssignedForDemoBy = (customerId: number) => demoAssignedByMap.value[cus
             </div>
         </div>
 
+        <div class="rounded-3xl border border-slate-200 bg-white shadow-sm px-5 py-3 text-sm text-slate-700 flex flex-wrap items-center gap-x-4 gap-y-2">
+            <span class="font-semibold text-slate-900">Counts:</span>
+            <span>Assigned: <span class="font-semibold">{{ total }}</span></span>
+            <span>Pending: <span class="font-semibold">{{ pendingCount }}</span></span>
+            <span>Done: <span class="font-semibold">{{ doneCount }}</span></span>
+            <span>Cancelled: <span class="font-semibold">{{ cancelledCount }}</span></span>
+        </div>
+
         <!-- Cards (2 in one line on lg) -->
         <div class="rounded-3xl border border-slate-200 bg-white shadow-sm">
             <div class="border-b border-slate-100 px-6 py-4">
@@ -540,9 +735,6 @@ const getAssignedForDemoBy = (customerId: number) => demoAssignedByMap.value[cus
                     <i class="pi pi-users mr-2" />
                     Customers
                 </h2>
-                <p class="text-sm text-slate-500 mt-0.5">
-                    Notes, full details, and timeline are inside View Details.
-                </p>
             </div>
 
             <div class="p-4">
@@ -558,7 +750,7 @@ const getAssignedForDemoBy = (customerId: number) => demoAssignedByMap.value[cus
                         :key="row.id"
                         class="relative h-full overflow-hidden rounded-3xl border border-slate-200 bg-white p-5 hover:shadow-md transition"
                     >
-                        <div class="absolute left-0 top-0 h-full w-1.5 bg-gradient-to-b" :class="demoStatusStripeClass(row.demo_status ?? 'Pending')" />
+                        <div class="absolute left-0 top-0 h-full w-1.5 bg-gradient-to-b" :class="demoStatusStripeClass(row.demo_status ?? null)" />
 
                         <div class="pl-2">
                             <div class="flex flex-col gap-5 2xl:flex-row 2xl:items-start">
@@ -585,8 +777,8 @@ const getAssignedForDemoBy = (customerId: number) => demoAssignedByMap.value[cus
                                                 </div>
                                             </div>
 
-                                            <span class="px-3 py-1 text-xs font-semibold rounded-full whitespace-nowrap" :class="demoStatusPillClass(row.demo_status ?? 'Pending')">
-                                                {{ row.demo_status ?? "Pending" }}
+                                            <span class="px-3 py-1 text-xs font-semibold rounded-full whitespace-nowrap" :class="demoStatusPillClass(row.demo_status ?? null)">
+                                                {{ row.demo_status ?? "Assigned" }}
                                             </span>
                                         </div>
                                     </div>
@@ -638,7 +830,7 @@ const getAssignedForDemoBy = (customerId: number) => demoAssignedByMap.value[cus
                                         <button
                                             type="button"
                                             class="relative w-full inline-flex items-center justify-center rounded-2xl bg-purple-600 text-white px-4 py-2 text-sm font-semibold hover:bg-purple-700 transition"
-                                            @click="openDetails(row, 'notes')"
+                                            @click="openNotes(row)"
                                         >
                                             <i class="pi pi-comments mr-2" />Notes
                                             <span
@@ -707,17 +899,6 @@ const getAssignedForDemoBy = (customerId: number) => demoAssignedByMap.value[cus
                 >
                     <i class="pi pi-history mr-2" />History
                 </button>
-                <button
-                    type="button"
-                    class="px-4 py-2 rounded-full text-sm font-semibold transition"
-                    :class="detailsTab === 'notes' ? 'bg-purple-600 text-white' : 'bg-purple-50 text-purple-700 hover:bg-purple-100'"
-                    @click="detailsTab = 'notes'"
-                >
-                    <i class="pi pi-comments mr-2" />Notes
-                    <span v-if="detailsCustomer?.demo_notes_unread > 0" class="ml-2 px-2 py-0.5 rounded-full text-xs bg-red-600 text-white">
-                        {{ detailsCustomer.demo_notes_unread }}
-                    </span>
-                </button>
             </div>
 
             <!-- Info -->
@@ -726,10 +907,9 @@ const getAssignedForDemoBy = (customerId: number) => demoAssignedByMap.value[cus
                     <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                         <div class="text-slate-900 font-semibold">
                             {{ detailsCustomer?.name || "-" }}
-                            <span class="text-slate-500 text-sm font-medium ml-2">ID: {{ detailsCustomer?.id }}</span>
                         </div>
-                        <span class="px-3 py-1 text-xs font-semibold rounded-full w-fit" :class="demoStatusPillClass(detailsCustomer?.demo_status ?? 'Pending')">
-                            {{ detailsCustomer?.demo_status ?? "Pending" }}
+                        <span class="px-3 py-1 text-xs font-semibold rounded-full w-fit" :class="demoStatusPillClass(detailsCustomer?.demo_status ?? null)">
+                            {{ detailsCustomer?.demo_status ?? "Assigned" }}
                         </span>
                     </div>
 
@@ -841,7 +1021,7 @@ const getAssignedForDemoBy = (customerId: number) => demoAssignedByMap.value[cus
                                             <span class="font-semibold text-indigo-700">{{ item.staff || "-" }}</span>
                                         </div>
                                         <span class="text-indigo-600 text-sm font-medium">
-                                            <i class="pi pi-clock mr-2" />{{ formatDateTime(item.created_at) }}
+                                            Change Time: {{ formatDateTime(item.created_at) }}
                                         </span>
                                     </div>
 
@@ -849,11 +1029,11 @@ const getAssignedForDemoBy = (customerId: number) => demoAssignedByMap.value[cus
                                         <strong>Note:</strong> <span class="ml-1">{{ item.note }}</span>
                                     </div>
 
-                                    <div v-if="item.old_data && Object.keys(item.old_data).length"
+                                    <div v-if="historyEntries(item.old_data).length"
                                         class="bg-gray-50 p-4 rounded-lg border border-gray-200">
                                         <strong class="text-indigo-700"><i class="pi pi-pencil mr-2" />Changed Fields:</strong>
                                         <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3 text-sm text-gray-700">
-                                            <div v-for="(value, key) in item.old_data" :key="key" class="flex gap-2">
+                                            <div v-for="([key, value]) in historyEntries(item.old_data)" :key="key" class="flex gap-2">
                                                 <span class="font-medium capitalize min-w-28">
                                                     {{ String(key).replace(/_/g, ' ') }}:
                                                 </span>
@@ -869,63 +1049,105 @@ const getAssignedForDemoBy = (customerId: number) => demoAssignedByMap.value[cus
                 </div>
             </div>
 
-            <!-- Notes -->
-            <div v-else class="space-y-4">
-                <div class="rounded-3xl border border-slate-200 bg-slate-50 p-4">
-                    <div class="text-sm font-semibold text-slate-900"><i class="pi pi-comments mr-2" />Demo Notes</div>
-                    <p class="text-xs text-slate-500 mt-1">Press Enter to send, Shift+Enter for new line.</p>
-                </div>
-
-                <div class="h-[22rem] overflow-y-auto rounded-3xl border border-slate-200 bg-white p-4">
-                    <div v-if="notesLoading" class="text-sm text-slate-500 text-center py-10">Loading...</div>
-                    <div v-else-if="notes.length === 0" class="text-sm text-slate-500 text-center py-10">
-                        No messages yet.
-                    </div>
-                    <div v-else class="space-y-3">
-                        <div v-for="n in notes" :key="n.id" class="flex" :class="isMine(n) ? 'justify-end' : 'justify-start'">
-                            <div
-                                class="max-w-[75%] rounded-3xl px-4 py-3 shadow-sm border"
-                                :class="isMine(n) ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-800 border-slate-200'"
-                            >
-                                <div class="text-xs opacity-90 mb-1 flex items-center justify-between gap-3">
-                                    <span class="font-semibold">
-                                        <i class="pi pi-user mr-2" />
-                                        {{ isMine(n) ? 'You' : (n.user?.name || 'User') }}
-                                        <span class="font-normal opacity-80" v-if="n.user?.role">({{ n.user.role }})</span>
-                                    </span>
-                                    <span class="opacity-80"><i class="pi pi-clock mr-2" />{{ formatTime(n.created_at) }}</span>
-                                </div>
-                                <div class="text-sm whitespace-pre-line">{{ n.message }}</div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="flex gap-2">
-                    <textarea
-                        v-model="message"
-                        rows="2"
-                        class="flex-1 border rounded-3xl p-3 focus:ring-2 focus:ring-purple-400 focus:outline-none"
-                        placeholder="Write a message..."
-                        @keydown.enter.exact.prevent="send"
-                    />
-                    <button
-                        class="px-5 py-2 rounded-3xl bg-purple-600 text-white font-semibold hover:bg-purple-700 transition disabled:opacity-60"
-                        :disabled="sending || !message.trim()"
-                        type="button"
-                        @click="send"
-                    >
-                        <i class="pi pi-send mr-2" />
-                        {{ sending ? "Sending..." : "Send" }}
-                    </button>
-                </div>
-            </div>
-
             <template #footer>
                 <button class="px-5 py-2 bg-slate-900 text-white rounded-2xl hover:bg-slate-800 transition" @click="showDetailsDialog = false">
                     Close
                 </button>
             </template>
+        </Dialog>
+
+        <!-- Notes Modal -->
+        <Dialog
+            v-model:visible="showNotesDialog"
+            modal
+            :style="{ width: '50rem', maxWidth: '95vw', height: 'auto' }"
+            :header="notesCustomer?.name ? `Notes — ${notesCustomer.name}` : 'Notes'"
+        >
+            <div class="space-y-4">
+                <!-- Chat -->
+                <div class="rounded-3xl border border-slate-200 bg-white overflow-hidden">
+                    <div class="border-b border-slate-100 px-5 py-3 flex items-center justify-between">
+                        <div class="text-sm font-semibold text-slate-900">
+                            <i class="pi pi-comments mr-2" />Chat
+                        </div>
+                        <div class="text-xs text-slate-500">Enter to send · Shift+Enter for new line</div>
+                    </div>
+
+                    <div class="bg-gradient-to-b from-slate-50 to-white px-4 py-4">
+                        <div ref="notesScrollEl" class="h-[26rem] overflow-y-auto pr-2">
+                            <div v-if="notesLoading" class="text-sm text-slate-500 text-center py-14">Loading...</div>
+
+                            <div v-else-if="notes.length === 0" class="text-sm text-slate-500 text-center py-14">
+                                No messages yet.
+                            </div>
+
+                            <div v-else class="space-y-3">
+                                <div
+                                    v-for="n in notes"
+                                    :key="n.id"
+                                    class="flex items-end gap-2"
+                                    :class="isMine(n) ? 'justify-end' : 'justify-start'"
+                                >
+                                    <div v-if="!isMine(n)" class="h-9 w-9 shrink-0 rounded-2xl bg-white border border-slate-200 flex items-center justify-center text-slate-700 font-semibold">
+                                        {{ initials(n.user?.name || 'U') }}
+                                    </div>
+
+                                    <div
+                                        class="max-w-[78%] rounded-3xl px-4 py-3 shadow-sm border"
+                                        :class="isMine(n) ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-800 border-slate-200'"
+                                    >
+                                        <div class="mb-1 flex items-center justify-between gap-4 text-[11px] opacity-90">
+                                            <span class="font-semibold truncate">
+                                                {{ isMine(n) ? 'You' : (n.user?.name || 'User') }}
+                                                <span class="font-normal opacity-80" v-if="n.user?.role">({{ n.user.role }})</span>
+                                            </span>
+                                            <span class="shrink-0 opacity-80">{{ formatTime(n.created_at) }}</span>
+                                        </div>
+                                        <div class="text-sm whitespace-pre-line leading-relaxed">{{ n.message }}</div>
+                                    </div>
+
+                                    <div v-if="isMine(n)" class="h-9 w-9 shrink-0 rounded-2xl bg-slate-900 text-white flex items-center justify-center font-semibold">
+                                        {{ initials(currentUser?.name || 'Y') }}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Composer -->
+                    <div class="border-t border-slate-100 bg-white px-4 py-4">
+                        <div class="flex gap-2">
+                            <div class="flex-1 rounded-3xl border border-slate-200 bg-white shadow-sm focus-within:ring-2 focus-within:ring-purple-300">
+                                <textarea
+                                    v-model="message"
+                                    rows="2"
+                                    class="w-full resize-none rounded-3xl bg-transparent px-4 py-3 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none"
+                                    placeholder="Write a message..."
+                                    @keydown.enter.exact.prevent="send"
+                                />
+                            </div>
+                            <button
+                                class="inline-flex items-center justify-center rounded-3xl bg-purple-600 px-5 py-3 text-sm font-semibold text-white shadow-sm hover:bg-purple-700 transition disabled:opacity-60 disabled:cursor-not-allowed"
+                                :disabled="sending || !message.trim()"
+                                type="button"
+                                @click="send"
+                            >
+                                <i class="pi pi-send mr-2" />
+                                {{ sending ? "Sending..." : "Send" }}
+                            </button>
+                            <button class="px-5 py-2 bg-slate-900 text-white rounded-2xl hover:bg-slate-800 transition" @click="showNotesDialog = false">
+                                Close
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- <template #footer>
+                <button class="px-5 py-2 bg-slate-900 text-white rounded-2xl hover:bg-slate-800 transition" @click="showNotesDialog = false">
+                    Close
+                </button>
+            </template> -->
         </Dialog>
 
         <!-- Update Status Modal -->
@@ -941,19 +1163,20 @@ const getAssignedForDemoBy = (customerId: number) => demoAssignedByMap.value[cus
                     <select v-model="selectedDemoStatus" class="border rounded-2xl px-3 py-2" :disabled="isLocked(statusCustomer)">
                         <option value="Pending">Pending</option>
                         <option value="Done">Done</option>
+                        <option value="Cancelled">Cancelled</option>
                     </select>
                 </div>
 
                 <div class="flex flex-col gap-2">
                     <label class="font-medium">
-                        Note <span class="text-red-600" v-if="selectedDemoStatus === 'Done'">*</span>
+                        Note <span class="text-red-600" v-if="selectedDemoStatus === 'Done' || selectedDemoStatus === 'Cancelled'">*</span>
                     </label>
                     <textarea
                         v-model="statusNote"
                         rows="4"
                         class="w-full border rounded-2xl p-3 focus:ring-2 focus:ring-blue-400 focus:outline-none disabled:bg-slate-50"
                         :disabled="isLocked(statusCustomer)"
-                        placeholder="Write demo feedback / result..."
+                        :placeholder="selectedDemoStatus === 'Cancelled' ? 'Write why this demo was cancelled...' : 'Write demo feedback / result...'"
                     />
                 </div>
             </div>

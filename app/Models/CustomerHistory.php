@@ -14,8 +14,7 @@ class CustomerHistory extends Model
 
     public function staff()
     {
-        return $this->belongsTo(User::class, 'staff_id')
-                    ->where('role', 'staff'); // optional
+        return $this->belongsTo(User::class, 'staff_id');
     }
 
     public function customer()

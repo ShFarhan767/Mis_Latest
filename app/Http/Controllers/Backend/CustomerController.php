@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\Auth;
 use App\Models\CustomerAssignHistory;
 use App\Http\Requests\CustomerRequest;
 use App\Models\CustomerDemoNote;
+use App\Models\CustomerHistory;
 use Illuminate\Support\Facades\DB;
 
 class CustomerController extends Controller
@@ -54,7 +55,7 @@ class CustomerController extends Controller
         if (auth()->user()->role === 'demo_presenter') {
             // Demo presenter → only customers assigned to them for demo
             $query->where('demo_presenter_id', auth()->id())
-                ->whereIn('staff_status', ['Need To Show Demo', 'Demo Done']);
+                ->whereIn('staff_status', ['Need To Show Demo', 'Demo Done', 'Cancelled']);
         }
 
         // ADMIN → all customers (assigned + unassigned)
@@ -226,8 +227,15 @@ class CustomerController extends Controller
             }
 
             $data['demo_presenter_id'] = $presenter->id;
-            $data['demo_status'] = 'Pending';
+            // Demo presenter should decide when it becomes Pending/Done/Cancelled.
+            $data['demo_status'] = null;
             $data['demo_done_at'] = null;
+        } elseif (in_array($request->staff_status, ['Demo Done', 'Cancelled'], true)) {
+            // Keep demo presenter assignment so they can still see notes/history.
+            $data['demo_status'] = $request->staff_status === 'Demo Done' ? 'Done' : 'Cancelled';
+            $data['demo_done_at'] = $request->staff_status === 'Demo Done'
+                ? ($customer->demo_done_at ?? now())
+                : null;
         } else {
             // Clear demo presenter if moving away from demo status
             $data['demo_presenter_id'] = null;
@@ -246,11 +254,16 @@ class CustomerController extends Controller
     public function updateDemoStatus(Request $request, $id)
     {
         $data = $request->validate([
-            'demo_status' => 'required|in:Pending,Done',
+            'demo_status' => 'required|in:Pending,Done,Cancelled',
             'note' => 'nullable|string|max:5000',
         ]);
 
         $customer = $this->service->repo->find($id);
+        $oldForHistory = [
+            'demo_status' => $customer->demo_status ?? null,
+            'staff_status' => $customer->staff_status ?? null,
+            'demo_done_at' => $customer->demo_done_at ?? null,
+        ];
 
         $user = auth()->user();
         if ($user->role === 'staff' && (int)$customer->assigned_staff_id !== (int)$user->id) {
@@ -260,13 +273,13 @@ class CustomerController extends Controller
             return response()->json(['message' => 'Forbidden'], 403);
         }
 
-        // Lock demo presenter changes once marked Done (even if staff_status gets changed later)
+        // Lock demo presenter changes once marked final
         if (
             $user->role === 'demo_presenter'
-            && (($customer->demo_status ?? null) === 'Done' || !empty($customer->demo_done_at))
+            && in_array(($customer->demo_status ?? null), ['Done', 'Cancelled'], true)
         ) {
             return response()->json([
-                'message' => 'Demo status is locked once marked Done.'
+                'message' => 'Demo status is locked once marked Done or Cancelled.'
             ], 422);
         }
 
@@ -276,8 +289,12 @@ class CustomerController extends Controller
             ], 422);
         }
 
-        if ($data['demo_status'] === 'Done' && empty(trim($data['note'] ?? ''))) {
-            return response()->json(['message' => 'Note is required when marking demo as Done.'], 422);
+        if (in_array($data['demo_status'], ['Done', 'Cancelled'], true) && empty(trim($data['note'] ?? ''))) {
+            return response()->json([
+                'message' => $data['demo_status'] === 'Cancelled'
+                    ? 'Note is required when marking demo as Cancelled.'
+                    : 'Note is required when marking demo as Done.'
+            ], 422);
         }
 
         $update = [
@@ -286,7 +303,11 @@ class CustomerController extends Controller
         ];
 
         // Keep staff_status in sync for demo presenter flow
-        $update['staff_status'] = $data['demo_status'] === 'Done' ? 'Demo Done' : 'Need To Show Demo';
+        $update['staff_status'] = match ($data['demo_status']) {
+            'Done' => 'Demo Done',
+            'Cancelled' => 'Cancelled',
+            default => 'Need To Show Demo',
+        };
 
         $updated = $this->service->repo->update($customer->id, $update, auth()->id());
 
@@ -297,6 +318,16 @@ class CustomerController extends Controller
                 'message' => $data['note'],
             ]);
         }
+
+        $noteText = trim($data['note'] ?? '');
+        CustomerHistory::create([
+            'customer_id' => $customer->id,
+            'staff_id' => auth()->id(),
+            'note' => $noteText !== ''
+                ? "Demo {$data['demo_status']}: {$noteText}"
+                : "Demo status changed to {$data['demo_status']}",
+            'old_data' => $oldForHistory,
+        ]);
 
         return response()->json([
             'message' => 'Demo status updated',

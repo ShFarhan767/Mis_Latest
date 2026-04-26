@@ -179,7 +179,15 @@ const fetchUsers = async () => {
 const fetchDemoPresenters = async () => {
     try {
         const { data } = await axios.get('/api/demo-presenters');
-        demoPresenters.value = Array.isArray(data) ? data : data?.data || [];
+        const list = Array.isArray(data) ? data : data?.data || [];
+        demoPresenters.value = list.map((presenter: any) => {
+            const presenterNumber = presenter.mobile || presenter.phone || presenter.number || null;
+
+            return {
+                ...presenter,
+                label: presenterNumber ? `${presenter.name} (${presenterNumber})` : presenter.name,
+            };
+        });
     } catch (error) {
         toast.add({
             severity: 'error',
@@ -211,8 +219,6 @@ const fetchNewCustomers = async () => {
         const { data } = await axios.get("/api/customers");
 
         let list = data.customers
-            // 🚫 REMOVE CANCELLED CUSTOMERS HERE
-            .filter((c: any) => c.staff_status !== "Cancelled")
             .map((c: any) => ({
                 ...c,
 
@@ -620,12 +626,12 @@ const showAssignedUserFilter = computed(() =>
 );
 
 const showDemoPresenterFilter = computed(() =>
-    currentUser.value?.role === 'admin' &&
-    (activeTab.value === 'Need To Show Demo' || activeTab.value === 'Demo Done')
+    (currentUser.value?.role === 'admin' || currentUser.value?.role === 'staff') &&
+    (activeTab.value === 'Need To Show Demo' || activeTab.value === 'Demo Done' || activeTab.value === 'Cancelled')
 );
 
 watch(activeTab, (tab) => {
-    if (tab !== 'Need To Show Demo' && tab !== 'Demo Done') filterDemoPresenter.value = null;
+    if (tab !== 'Need To Show Demo' && tab !== 'Demo Done' && tab !== 'Cancelled') filterDemoPresenter.value = null;
 });
 
 const statusTabs = computed(() => {
@@ -638,6 +644,7 @@ const statusTabs = computed(() => {
         "Call For Demo",
         "Need To Show Demo",
         "Demo Done",
+        "Cancelled",
         "Need Direct Meeting",
         "Future",
         "Unwanted",
@@ -657,6 +664,7 @@ const statusTabs = computed(() => {
             "Call For Demo",
             "Need To Show Demo",
             "Demo Done",
+            "Cancelled",
             "Need Direct Meeting",
             "Future",
             "Unwanted",
@@ -832,8 +840,8 @@ const filteredCustomers = computed(() => {
     }
 
     if (
-        currentUser.value?.role === 'admin' &&
-        (activeTab.value === 'Need To Show Demo' || activeTab.value === 'Demo Done') &&
+        (currentUser.value?.role === 'admin' || currentUser.value?.role === 'staff') &&
+        (activeTab.value === 'Need To Show Demo' || activeTab.value === 'Demo Done' || activeTab.value === 'Cancelled') &&
         filterDemoPresenter.value
     ) {
         list = list.filter(c => (intOrNull(c.demo_presenter_id) === intOrNull(filterDemoPresenter.value?.id)));
@@ -857,7 +865,7 @@ const showFilteredCount = computed(() => {
 const filteredCount = computed(() => filteredCustomers.value.length);
 
 const formattedUsers = computed(() =>
-    allUsers.value.map(u => ({
+    users.value.map(u => ({
         ...u,
         label: u.mobile ? `${u.name} (${u.mobile})` : u.name, // Name + mobile
         value: u.id
@@ -866,9 +874,16 @@ const formattedUsers = computed(() =>
 
 const getDemoPresenterName = (row: any) => {
     if (!row) return "-";
-    if (row.demo_presenter?.name) return row.demo_presenter.name;
-    const found = demoPresenters.value.find((p: any) => p.id === row.demo_presenter_id);
-    return found?.name || "-";
+
+    const presenter =
+        row.demo_presenter ||
+        demoPresenters.value.find((p: any) => p.id === row.demo_presenter_id);
+
+    if (!presenter?.name) return "-";
+
+    const presenterNumber = presenter.mobile || presenter.phone || presenter.number || null;
+
+    return presenterNumber ? `${presenter.name} (${presenterNumber})` : presenter.name;
 };
 
 const searchResults = computed(() => {
@@ -924,6 +939,15 @@ const formatHistoryValue = (key: string, value: any) => {
     return value;
 };
 
+const historyEntries = (oldData: any): Array<[string, any]> => {
+    return Object.entries(oldData ?? {}).filter(([, value]) => {
+        if (value === null || value === undefined || value === "") return false;
+        if (Array.isArray(value) && value.length === 0) return false;
+        if (typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === 0) return false;
+        return true;
+    });
+};
+
 // Table columns
 const columns = [
     { key: "sn", label: "SN", align: "center" },
@@ -964,7 +988,17 @@ onMounted(async () => {
 const getStaffName = (staffId: number | null, fallback = '-') => {
     if (!staffId) return fallback;
     const staff = allUsers.value.find(u => u.id === staffId);
-    return staff ? staff.name : fallback;
+    if (staff?.name) return staff.name;
+    const presenter = demoPresenters.value.find((p: any) => p.id === staffId);
+    return presenter?.name || fallback;
+};
+
+const getStaffMobile = (staffId: number | null, fallback = '-') => {
+    if (!staffId) return fallback;
+    const staff = allUsers.value.find(u => u.id === staffId);
+    if (staff?.mobile) return staff.mobile;
+    const presenter = demoPresenters.value.find((p: any) => p.id === staffId);
+    return presenter?.mobile || presenter?.phone || presenter?.number || fallback;
 };
 
 const formatDateTime = (dateStr: string) => {
@@ -1025,7 +1059,7 @@ const getDemoAssignedAt = (customerId: number) => demoAssignedAtMap.value[custom
                     class="px-4 py-2 rounded-full text-sm font-medium transition" :class="activeTab === status
                         ? 'bg-blue-600 text-white shadow'
                         : 'bg-gray-100 text-gray-700 hover:bg-gray-200'">
-                    {{ status }}
+                    {{ status === 'Cancelled' ? 'Demo Cancelled' : status }}
                     <span class="ml-1 text-xs opacity-80">
                         (
                         {{ statusCount(status) }}
@@ -1049,15 +1083,15 @@ const getDemoAssignedAt = (customerId: number) => demoAssignedAtMap.value[custom
                     </div> -->
 
                     <!-- Assigned User Filter (Admin: All Assign tab) -->
-                    <div class="flex flex-col w-full md:w-62" v-if="showAssignedUserFilter">
+                    <div class="flex flex-col w-full md:w-60" v-if="showAssignedUserFilter">
                         <label class="text-sm font-semibold text-gray-600 mb-1">
                             <i class="pi pi-users mr-1 text-indigo-500"></i>
                             Assigned User
                         </label>
                         <Multiselect
                             v-model="filterAssignedUser"
-                            :options="users"
-                            label="name"
+                            :options="formattedUsers"
+                            label="label"
                             track-by="id"
                             placeholder="Select assigned staff"
                             :searchable="true"
@@ -1068,7 +1102,7 @@ const getDemoAssignedAt = (customerId: number) => demoAssignedAtMap.value[custom
                     </div>
 
                     <!-- Demo Presenter Filter (Admin: Need To Show Demo + Demo Done tabs) -->
-                    <div class="flex flex-col w-full md:w-62" v-if="showDemoPresenterFilter">
+                    <div class="flex flex-col w-full md:w-60" v-if="showDemoPresenterFilter">
                         <label class="text-sm font-semibold text-gray-600 mb-1">
                             <i class="pi pi-user-edit mr-1 text-purple-600"></i>
                             Demo Presenter
@@ -1076,7 +1110,7 @@ const getDemoAssignedAt = (customerId: number) => demoAssignedAtMap.value[custom
                         <Multiselect
                             v-model="filterDemoPresenter"
                             :options="demoPresenters"
-                            label="name"
+                            label="label"
                             track-by="id"
                             placeholder="Select demo presenter"
                             :searchable="true"
@@ -1087,7 +1121,7 @@ const getDemoAssignedAt = (customerId: number) => demoAssignedAtMap.value[custom
                     </div>
 
                     <!-- Created Date Filter (PrimeVue Calendar) -->
-                    <div class="flex flex-col w-full md:w-50">
+                    <div class="flex flex-col w-full md:w-40">
                         <label class="text-sm font-semibold text-gray-600 mb-1">
                             <i class="pi pi-calendar mr-1 text-purple-500"></i>
                             Created Date
@@ -1097,7 +1131,7 @@ const getDemoAssignedAt = (customerId: number) => demoAssignedAtMap.value[custom
                             class="w-full" placeholder="Pick a date" />
                     </div>
 
-                    <div class="flex flex-col w-full md:w-40">
+                    <div class="flex flex-col w-full md:w-34">
                         <label class="text-sm font-semibold text-gray-600 mb-1">
                             <i class="pi pi-calendar-clock mr-1 text-indigo-500"></i>
                             Created Month
@@ -1126,7 +1160,7 @@ const getDemoAssignedAt = (customerId: number) => demoAssignedAtMap.value[custom
                         flex items-center gap-2
                     ">
                             <i class="pi pi-filter-slash"></i>
-                            Clear Filters
+                            Clear
                         </button>
                     </div>
                 </div>
@@ -1191,13 +1225,13 @@ const getDemoAssignedAt = (customerId: number) => demoAssignedAtMap.value[custom
                             </div>
 
                             <!-- Designation -->
-                            <span class="text-sm text-gray-500">
+                            <span class="text-sm text-gray-500 font-semibold">
                                 {{ row.designation || '-' }}
                             </span>
 
                             <!-- Assigned Staff -->
-                            <div v-for="staff in row.assigned_users" :key="staff.id" class="flex items-center gap-2">
-                                <span class="text-xs text-blue-600 font-medium">
+                            <div v-for="staff in row.assigned_users" :key="staff.id" class="flex items-center gap-2 z">
+                                <span class="text-xs text-blue-600 font-semibold">
                                     Assigned: {{ staff.name || 'Not Assigned' }}
                                 </span>
 
@@ -1209,18 +1243,18 @@ const getDemoAssignedAt = (customerId: number) => demoAssignedAtMap.value[custom
                             </div>
 
                             <!-- Staff Status -->
-                            <span class="text-xs text-gray-500">
+                            <span class="text-xs font-semibold text-gray-500">
                                 {{ row.staff_status || '-' }}
                             </span>
 
                             <span v-if="row.staff_status === 'Need To Show Demo' && (row.demo_presenter || row.demo_presenter_id)"
-                                class="text-xs text-purple-600">
+                                class="text-xs font-semibold text-purple-600">
                                 Demo Presenter:
                                 {{ getDemoPresenterName(row) }}
                             </span>
 
                             <span v-if="row.staff_status === 'Need To Show Demo' && getDemoAssignedAt(row.id)"
-                                class="text-xs text-amber-600">
+                                class="text-xs font-semibold text-indigo-600">
                                 Demo Assigned:
                                 {{ formatDateTime(getDemoAssignedAt(row.id)!) }}
                             </span>
@@ -1237,7 +1271,7 @@ const getDemoAssignedAt = (customerId: number) => demoAssignedAtMap.value[custom
                     <template #cell-created_info="{ row }">
                         <div class="flex flex-col items-center text-sm">
                             <span class="font-medium text-gray-800">
-                                {{ getStaffName(row.created_by) }}
+                                {{ getStaffName(row.created_by) }} ({{ getStaffMobile(row.created_by) }})
                             </span>
                             <span class="text-xs text-gray-500">
                                 {{ formatDate(row.created_at) }}
@@ -1334,7 +1368,7 @@ const getDemoAssignedAt = (customerId: number) => demoAssignedAtMap.value[custom
                         Select Staff
                     </label>
 
-                    <Multiselect v-model="selectedStaff" :options="users" label="name" track-by="id"
+                    <Multiselect v-model="selectedStaff" :options="formattedUsers" label="label" track-by="id"
                         placeholder="Select staff" :searchable="true" :close-on-select="true" :allow-empty="false"
                         class="w-full h-auto" />
                 </div>
@@ -1448,7 +1482,7 @@ const getDemoAssignedAt = (customerId: number) => demoAssignedAtMap.value[custom
                         <Multiselect
                             v-model="selectedDemoPresenter"
                             :options="demoPresenters"
-                            label="name"
+                            label="label"
                             track-by="id"
                             placeholder="Select demo presenter"
                             :searchable="true"
@@ -1581,22 +1615,22 @@ const getDemoAssignedAt = (customerId: number) => demoAssignedAtMap.value[custom
                                                 </span>
                                             </div>
                                             <span class="text-indigo-600 text-sm font-medium">
-                                                {{ formatDateTime(item.created_at) }}
+                                               Change Time: {{ formatDateTime(item.created_at) }}
                                             </span>
                                         </div>
 
                                         <!-- Note -->
                                         <div v-if="item.note && item.note.trim()" class="mb-3 text-gray-800">
-                                            <strong>Note:</strong>
+                                            <strong>Note: </strong>
                                             <span class="mt-1"> {{ item.note }}</span>
                                         </div>
 
                                         <!-- Changed Fields -->
-                                        <div v-if="item.old_data && Object.keys(item.old_data).length"
+                                        <div v-if="historyEntries(item.old_data).length"
                                             class="bg-gray-50 p-4 rounded-lg border border-gray-200">
                                             <strong class="text-indigo-700">Changed Fields:</strong>
                                             <div class="grid grid-cols-2 gap-3 mt-2 text-sm text-gray-700">
-                                                <div v-for="(value, key) in item.old_data" :key="key"
+                                                <div v-for="([key, value]) in historyEntries(item.old_data)" :key="key"
                                                     class="flex gap-2">
                                                     <span class="font-medium capitalize">{{ key.replace(/_/g, ' ')
                                                     }}:</span>
@@ -1729,6 +1763,10 @@ const getDemoAssignedAt = (customerId: number) => demoAssignedAtMap.value[custom
 /* Improve list spacing and readability inside modal */
 .multiselect {
     min-height: 42px;
+}
+
+:deep(.multiselect-assist) {
+    display: none !important;
 }
 
 .prose p {

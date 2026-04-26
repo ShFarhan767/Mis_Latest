@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, computed } from "vue";
+import { ref, watch, computed, nextTick } from "vue";
 import axios from "axios";
 import Dialog from "primevue/dialog";
 import Toast from "primevue/toast";
@@ -22,6 +22,10 @@ const loading = ref(false);
 const sending = ref(false);
 const message = ref("");
 const currentUser = ref<any | null>(null);
+const scrollEl = ref<HTMLElement | null>(null);
+const pollTimer = ref<ReturnType<typeof setInterval> | null>(null);
+const lastSeenNoteId = ref<number>(0);
+const audioCtx = ref<AudioContext | null>(null);
 
 const title = computed(() => props.customerName ? `Demo Notes — ${props.customerName}` : "Demo Notes");
 
@@ -35,14 +39,86 @@ const fetchCurrentUser = async () => {
     }
 };
 
-const fetchNotes = async () => {
-    if (!props.customerId) return;
-    loading.value = true;
+const ensureAudioUnlocked = async () => {
     try {
+        if (!audioCtx.value) {
+            const Ctx = (window as any).AudioContext || (window as any).webkitAudioContext;
+            if (!Ctx) return;
+            audioCtx.value = new Ctx();
+        }
+        if (audioCtx.value?.state === "suspended") await audioCtx.value.resume();
+    } catch {
+        // ignore
+    }
+};
+
+const playNotifySound = async () => {
+    await ensureAudioUnlocked();
+    const ctx = audioCtx.value;
+    if (!ctx) return;
+
+    const oscillator = ctx.createOscillator();
+    const gain = ctx.createGain();
+    oscillator.type = "sine";
+    oscillator.frequency.value = 880;
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.12, ctx.currentTime + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.18);
+    oscillator.connect(gain);
+    gain.connect(ctx.destination);
+    oscillator.start();
+    oscillator.stop(ctx.currentTime + 0.2);
+};
+
+const stopPolling = () => {
+    if (pollTimer.value) {
+        clearInterval(pollTimer.value);
+        pollTimer.value = null;
+    }
+};
+
+const fetchNotes = async (opts?: { playSound?: boolean; silent?: boolean; markRead?: boolean }) => {
+    if (!props.customerId) return;
+    const silent = opts?.silent ?? false;
+    const markRead = opts?.markRead ?? true;
+    if (!silent) loading.value = true;
+    try {
+        const prevMaxId = lastSeenNoteId.value || 0;
         const { data } = await axios.get(`/api/customers/${props.customerId}/demo-notes`);
-        notes.value = Array.isArray(data?.notes) ? data.notes : [];
-        await axios.put(`/api/customers/${props.customerId}/demo-notes/mark-read`);
+        const incoming = Array.isArray(data?.notes) ? data.notes : [];
+        notes.value = incoming;
+        if (markRead) {
+            try {
+                await axios.put(`/api/customers/${props.customerId}/demo-notes/mark-read`);
+            } catch {
+                // ignore
+            }
+        }
+
+        const maxId = incoming.reduce((m: number, n: any) => Math.max(m, Number(n?.id || 0)), 0);
+        const hasNewFromOther =
+            (opts?.playSound ?? false) &&
+            maxId > prevMaxId &&
+            incoming.some((n: any) => Number(n?.id || 0) > prevMaxId && n?.user_id !== currentUser.value?.id);
+
+        lastSeenNoteId.value = Math.max(prevMaxId, maxId);
+        if (hasNewFromOther) void playNotifySound();
+
+        await nextTick();
+        if (scrollEl.value) scrollEl.value.scrollTop = scrollEl.value.scrollHeight;
     } catch (error: any) {
+        if (silent) return;
+
+        if (error?.response?.status === 403) {
+            toast.add({
+                severity: "error",
+                summary: "Forbidden",
+                detail: "You don't have permission to view these demo notes.",
+                life: 3000,
+            });
+            return;
+        }
+
         toast.add({
             severity: "error",
             summary: "Error",
@@ -51,7 +127,7 @@ const fetchNotes = async () => {
         });
         notes.value = [];
     } finally {
-        loading.value = false;
+        if (!silent) loading.value = false;
     }
 };
 
@@ -68,6 +144,9 @@ const send = async () => {
         if (data?.note) notes.value.push(data.note);
         message.value = "";
         await axios.put(`/api/customers/${props.customerId}/demo-notes/mark-read`);
+        lastSeenNoteId.value = Math.max(lastSeenNoteId.value || 0, Number(data?.note?.id || 0));
+        await nextTick();
+        if (scrollEl.value) scrollEl.value.scrollTop = scrollEl.value.scrollHeight;
     } catch (error: any) {
         toast.add({
             severity: "error",
@@ -83,9 +162,25 @@ const send = async () => {
 watch(
     () => props.visible,
     async (v) => {
-        if (!v) return;
+        if (!v) {
+            stopPolling();
+            return;
+        }
+        lastSeenNoteId.value = 0;
         await fetchCurrentUser();
-        await fetchNotes();
+        await ensureAudioUnlocked();
+        await fetchNotes({ playSound: false, silent: false, markRead: true });
+        stopPolling();
+        pollTimer.value = setInterval(() => void fetchNotes({ playSound: true, silent: true, markRead: false }), 3000);
+    }
+);
+
+watch(
+    () => props.customerId,
+    async (id) => {
+        if (!props.visible || !id) return;
+        lastSeenNoteId.value = 0;
+        await fetchNotes({ playSound: false, silent: false, markRead: true });
     }
 );
 
@@ -118,7 +213,7 @@ const formatTime = (iso: string) => {
     >
         <Toast />
 
-        <div class="h-[22rem] overflow-y-auto rounded-xl border border-gray-200 bg-gray-50 p-4">
+        <div ref="scrollEl" class="h-[22rem] overflow-y-auto rounded-xl border border-gray-200 bg-gray-50 p-4">
             <div v-if="loading" class="text-sm text-gray-500 text-center py-10">Loading...</div>
 
             <div v-else-if="notes.length === 0" class="text-sm text-gray-500 text-center py-10">

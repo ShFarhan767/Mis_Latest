@@ -27,8 +27,9 @@ import {
     ContactRound,
 } from 'lucide-vue-next';
 
-const { props } = usePage();
-const user = computed(() => props.auth?.user || null);
+const page = usePage();
+const user = computed(() => page.props.auth?.user || null);
+const currentPath = computed(() => page.url || '');
 
 const openGroups = ref<Record<string, boolean>>({});
 
@@ -122,6 +123,16 @@ function canAccess(roles) {
     return roles.includes(user.value?.role);
 }
 
+function isActiveLink(href?: string) {
+    if (!href) return false;
+    return currentPath.value === href || currentPath.value.startsWith(`${href}/`);
+}
+
+function isGroupActive(item) {
+    if (item.href) return isActiveLink(item.href);
+    return item.children?.some(child => isActiveLink(child.href));
+}
+
 // ✅ Filter items based on current user role
 const filteredSidebarItems = computed(() => {
     if (!user.value) return [];
@@ -136,7 +147,10 @@ const filteredSidebarItems = computed(() => {
                 ?.filter(item => canAccess(item.roles))
                 .map(item => {
                     if (item.children) {
-                        item.children = item.children.filter(child => canAccess(child.roles));
+                        return {
+                            ...item,
+                            children: item.children.filter(child => canAccess(child.roles)),
+                        };
                     }
                     return item;
                 });
@@ -149,14 +163,25 @@ const filteredSidebarItems = computed(() => {
 </script>
 
 <template>
-    <Sidebar collapsible="icon" variant="inset" v-if="user.role !== 'employee'">
+    <Sidebar
+        collapsible="icon"
+        variant="inset"
+        v-if="user.role !== 'employee'"
+        class="border-r border-slate-200 bg-white text-slate-800"
+    >
         <!-- Header -->
-        <SidebarHeader>
+        <SidebarHeader class="border-b border-slate-100 px-4 py-4">
             <SidebarMenu>
                 <SidebarMenuItem>
-                    <SidebarMenuButton size="lg" as-child>
-                        <Link href="/dashboard">
-                        <AppLogo />
+                    <SidebarMenuButton
+                        size="lg"
+                        as-child
+                        class="h-auto rounded-2xl px-3 py-3 transition hover:bg-slate-50"
+                    >
+                        <Link href="/dashboard" class="flex items-center gap-3">
+                        <div class="flex h-10 w-full items-center justify-center rounded-xl text-white">
+                            <AppLogo />
+                        </div>
                         </Link>
                     </SidebarMenuButton>
                 </SidebarMenuItem>
@@ -164,48 +189,65 @@ const filteredSidebarItems = computed(() => {
         </SidebarHeader>
 
         <!-- Content -->
-        <SidebarContent>
-            <SidebarMenu>
+        <SidebarContent class="px-3 py-4">
+            <SidebarMenu class="space-y-5">
                 <template v-for="group in filteredSidebarItems" :key="group.section">
-                    <h2 class="px-4 pt-4 pb-2 text-gray-500 uppercase text-xs font-semibold">
-                        {{ group.section }}
-                    </h2>
+                    <div>
+                        <h2 class="px-3 pb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400 group-data-[collapsible=icon]:hidden">
+                            {{ group.section }}
+                        </h2>
 
-                    <template v-for="item in group.items" :key="item.title">
-                        <!-- Has submenu -->
-                        <SidebarMenuItem v-if="item.children && item.children.length > 0">
-                            <SidebarMenuButton @click="openGroups[item.title] = !openGroups[item.title]"
-                                class="flex items-center">
-                                <component :is="item.icon" v-if="item.icon" class="w-5 h-5" />
-                                <span class="ml-2">{{ item.title }}</span>
-                                <ChevronDown class="ml-auto w-4 h-4 transition-transform duration-200"
-                                    :class="{ 'rotate-180': openGroups[item.title] }" />
-                            </SidebarMenuButton>
+                        <template v-for="item in group.items" :key="item.title">
+                            <!-- Has submenu -->
+                            <SidebarMenuItem v-if="item.children && item.children.length > 0">
+                                <SidebarMenuButton
+                                    @click="openGroups[item.title] = !openGroups[item.title]"
+                                    class="mb-1 flex h-11 items-center rounded-xl px-3 text-slate-600 transition hover:bg-slate-100 hover:text-slate-900"
+                                    :class="isGroupActive(item) ? 'bg-slate-900 text-white hover:bg-slate-900 hover:text-white' : ''"
+                                >
+                                    <component :is="item.icon" v-if="item.icon" class="h-5 w-5 shrink-0" />
+                                    <span class="ml-3 truncate font-medium group-data-[collapsible=icon]:hidden">{{ item.title }}</span>
+                                    <ChevronDown
+                                        class="ml-auto h-4 w-4 transition-transform duration-200 group-data-[collapsible=icon]:hidden"
+                                        :class="{ 'rotate-180': openGroups[item.title] || isGroupActive(item) }"
+                                    />
+                                </SidebarMenuButton>
 
-                            <SidebarMenuSub v-if="openGroups[item.title]">
-                                <SidebarMenuSubItem v-for="child in item.children" :key="child.title">
-                                    <SidebarMenuSubButton as-child>
-                                        <Link :href="child.href">{{ child.title }}</Link>
-                                    </SidebarMenuSubButton>
-                                </SidebarMenuSubItem>
-                            </SidebarMenuSub>
-                        </SidebarMenuItem>
+                                <SidebarMenuSub
+                                    v-if="openGroups[item.title] || isGroupActive(item)"
+                                    class="ml-5 mt-1 space-y-1 border-l border-slate-200 pl-3 group-data-[collapsible=icon]:hidden"
+                                >
+                                    <SidebarMenuSubItem v-for="child in item.children" :key="child.title">
+                                        <SidebarMenuSubButton
+                                            as-child
+                                            class="h-9 rounded-lg px-3 text-sm text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
+                                            :class="isActiveLink(child.href) ? 'bg-slate-100 font-semibold text-slate-900' : ''"
+                                        >
+                                            <Link :href="child.href">{{ child.title }}</Link>
+                                        </SidebarMenuSubButton>
+                                    </SidebarMenuSubItem>
+                                </SidebarMenuSub>
+                            </SidebarMenuItem>
 
-                        <!-- Regular item -->
-                        <SidebarMenuItem v-else>
-                            <SidebarMenuButton as-child>
-                                <Link :href="item.href">
-                                <component :is="item.icon" v-if="item.icon" class="w-5 h-5" />
-                                <span class="ml-2">{{ item.title }}</span>
-                                </Link>
-                            </SidebarMenuButton>
-                        </SidebarMenuItem>
-                    </template>
+                            <!-- Regular item -->
+                            <SidebarMenuItem v-else>
+                                <SidebarMenuButton
+                                    as-child
+                                    class="mb-1 h-11 rounded-xl px-3 text-slate-600 transition hover:bg-slate-100 hover:text-slate-900"
+                                    :class="isActiveLink(item.href) ? 'bg-slate-900 text-white hover:bg-slate-900 hover:text-white' : ''"
+                                >
+                                    <Link :href="item.href" class="flex items-center">
+                                    <component :is="item.icon" v-if="item.icon" class="h-5 w-5 shrink-0" />
+                                    <span class="ml-3 truncate font-medium group-data-[collapsible=icon]:hidden">{{ item.title }}</span>
+                                    </Link>
+                                </SidebarMenuButton>
+                            </SidebarMenuItem>
+                        </template>
+                    </div>
                 </template>
             </SidebarMenu>
         </SidebarContent>
 
-        <SidebarFooter />
     </Sidebar>
 
     <slot />
