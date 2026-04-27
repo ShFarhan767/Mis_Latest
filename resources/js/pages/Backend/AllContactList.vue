@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed, watch } from "vue";
+import { ref, onBeforeUnmount, onMounted, computed, watch } from "vue";
 import axios from "axios";
 import DataTable from "@/Components/DataTable.vue";
 import Toast from "primevue/toast";
@@ -41,6 +41,8 @@ const historyData = ref<any[]>([]);
 const noteCustomerId = ref<number | null>(null);
 const newNote = ref("");
 const customerHistory = ref<any[]>([]);
+const openingCustomerNotes = ref(false);
+const markingCustomerNotesRead = ref(false);
 
 const allServiceTypeOptions = ref<string[]>([]);
 const selectedOldServiceTypes = ref<string[]>([]);
@@ -84,10 +86,22 @@ const openHistoryModal = async (customer: any) => {
 };
 
 const openNoteModal = async (customer: any) => {
+    openingCustomerNotes.value = true;
     noteCustomerId.value = customer.id;
     newNote.value = "";
-    await fetchLatestNotes();
-    showExtraNoteModal.value = true;
+    try {
+        await fetchLatestNotes();
+        showExtraNoteModal.value = true;
+    } catch {
+        toast.add({
+            severity: 'error',
+            summary: 'Error',
+            detail: 'Failed to load customer notes',
+            life: 3000,
+        });
+    } finally {
+        openingCustomerNotes.value = false;
+    }
 };
 
 const fetchLatestNotes = async () => {
@@ -97,20 +111,70 @@ const fetchLatestNotes = async () => {
         `/api/customers/${noteCustomerId.value}/notes`
     );
 
-    customerHistory.value = data.slice(0, 2);
+    customerHistory.value = Array.isArray(data) ? data : [];
+};
+
+const getCustomerNotesUnread = (customerId: number | null) => {
+    if (!customerId) return 0;
+    const customer = customers.value.find((item: any) => item.id === customerId);
+    return Number(customer?.customer_notes_unread ?? 0);
+};
+
+const markCustomerNotesRead = async () => {
+    if (!noteCustomerId.value || markingCustomerNotesRead.value) return;
+
+    markingCustomerNotesRead.value = true;
+    try {
+        await axios.put(`/api/customers/${noteCustomerId.value}/notes/mark-read`);
+
+        const customer = customers.value.find((item: any) => item.id === noteCustomerId.value);
+        if (customer) {
+            customer.customer_notes_unread = 0;
+        }
+
+        toast.add({
+            severity: 'success',
+            summary: 'Marked Read',
+            detail: 'Unread note messages cleared',
+            life: 2000,
+        });
+    } catch {
+        toast.add({
+            severity: 'error',
+            summary: 'Error',
+            detail: 'Failed to mark note messages as read',
+            life: 3000,
+        });
+    } finally {
+        markingCustomerNotesRead.value = false;
+    }
 };
 
 const saveNote = async () => {
     if (!noteCustomerId.value || !newNote.value.trim()) return;
 
-    await axios.post(`/api/customers/${noteCustomerId.value}/add-note`, {
-        note: newNote.value
-    });
+    try {
+        await axios.post(`/api/customers/${noteCustomerId.value}/add-note`, {
+            note: newNote.value
+        });
 
-    toast.add({ severity: 'success', summary: 'Saved', detail: 'Note added', life: 2000 });
-    newNote.value = "";
-    showExtraNoteModal.value = false;
-    fetchLatestNotes();
+        const customer = customers.value.find((item: any) => item.id === noteCustomerId.value);
+        if (customer) {
+            customer.last_discuss_note = newNote.value;
+        }
+
+        newNote.value = "";
+        await fetchLatestNotes();
+
+        toast.add({ severity: 'success', summary: 'Saved', detail: 'Note added', life: 2000 });
+    } catch {
+        toast.add({
+            severity: 'error',
+            summary: 'Error',
+            detail: 'Failed to add note',
+            life: 3000,
+        });
+    }
 };
 
 const startEdit = (note: any) => {
@@ -131,7 +195,6 @@ const updateNote = async () => {
 
         editingNoteId.value = null;
         editingContent.value = "";
-        showExtraNoteModal.value = false;
 
         toast.add({
             severity: 'success',
@@ -149,10 +212,18 @@ const updateNote = async () => {
     }
 };
 
+const getNoteAuthorName = (history: any) => {
+    if (!history) return '-';
+    if (typeof history.staff?.name === 'string' && history.staff.name.trim()) return history.staff.name;
+    if (typeof history.staff === 'string' && history.staff.trim()) return history.staff;
+    return getStaffName(history.staff_id) || '-';
+};
+
 const allUsers = ref<any[]>([]);
 const currentUser = ref<any | null>(null);
 const users = ref<any[]>([]);
 const demoPresenters = ref<any[]>([]);
+const unreadRefreshTimer = ref<ReturnType<typeof setInterval> | null>(null);
 
 // ====================
 // FETCH LOGGED-IN STAFF
@@ -221,6 +292,9 @@ const fetchNewCustomers = async () => {
         let list = data.customers
             .map((c: any) => ({
                 ...c,
+                // Ensure sales staff can see a meaningful value in Today Customers tab
+                // (some records use `status` for the initial state)
+                staff_status: c.staff_status || c.status || "New",
 
                 service_type: (() => {
                     try {
@@ -240,6 +314,7 @@ const fetchNewCustomers = async () => {
 
                 assigned_users: c.assigned_staff ? [c.assigned_staff] : [],
                 demo_notes_unread: c.demo_notes_unread ?? 0,
+                customer_notes_unread: c.customer_notes_unread ?? 0,
             }));
 
         customers.value = list;
@@ -254,9 +329,39 @@ const fetchNewCustomers = async () => {
     }
 };
 
+const refreshUnreadCounts = async () => {
+    try {
+        const { data } = await axios.get("/api/customers");
+        const incoming = Array.isArray(data?.customers) ? data.customers : [];
+        const unreadMap = new Map(
+            incoming.map((customer: any) => [
+                customer.id,
+                {
+                    customer_notes_unread: customer.customer_notes_unread ?? 0,
+                    demo_notes_unread: customer.demo_notes_unread ?? 0,
+                },
+            ])
+        );
+
+        customers.value = customers.value.map((customer: any) => {
+            const unread = unreadMap.get(customer.id);
+            if (!unread) return customer;
+            return {
+                ...customer,
+                customer_notes_unread: unread.customer_notes_unread,
+                demo_notes_unread: unread.demo_notes_unread,
+            };
+        });
+    } catch {
+        // ignore background refresh errors
+    }
+};
+
 const hydrateDemoAssignedTimes = async (list: any[]) => {
     const demoRows = list.filter((customer: any) =>
-        customer.staff_status === "Need To Show Demo" || customer.staff_status === "Demo Done"
+        customer.staff_status === "Need To Show Demo" ||
+        customer.staff_status === "Demo Done" ||
+        customer.staff_status === "Cancelled"
     );
 
     if (!demoRows.length) {
@@ -512,10 +617,37 @@ const selectedDemoPresenter = ref<any | null>(null);
 const showDemoNotes = ref(false);
 const demoNotesCustomer = ref<any | null>(null);
 
+const getDemoNotesUnread = (customerId: number | null) => {
+    if (!customerId) return 0;
+    const customer = customers.value.find((item: any) => item.id === customerId);
+    return Number(customer?.demo_notes_unread ?? 0);
+};
+
+const getDemoNotesTab = (customer: any) => {
+    if (!customer) return "Need To Show Demo";
+    if ((customer.demo_status ?? null) === "Pending") return "Demo Pending";
+    if (customer.staff_status === "Demo Done") return "Demo Done";
+    if (customer.staff_status === "Cancelled") return "Cancelled";
+    return "Need To Show Demo";
+};
+
+const getDemoNotesTabLabel = (customer: any) => {
+    const tab = getDemoNotesTab(customer);
+    return tab === "Cancelled" ? "Demo Cancelled" : tab;
+};
+
+const clearDemoNotesUnreadLocally = (customerId: number | null) => {
+    if (!customerId) return;
+    const customer = customers.value.find((item: any) => item.id === customerId);
+    if (customer) {
+        customer.demo_notes_unread = 0;
+    }
+};
+
 // Open modal
 const openStaffStatusModal = (customer: any) => {
     editingStaffCustomer.value = customer;
-    selectedStaffStatus.value = customer.staff_status || "";
+    selectedStaffStatus.value = customer.staff_status || customer.status || "New";
     selectedDemoPresenter.value =
         customer.demo_presenter ||
         demoPresenters.value.find((p: any) => p.id === customer.demo_presenter_id) ||
@@ -526,6 +658,24 @@ const openStaffStatusModal = (customer: any) => {
 const openDemoNotes = (customer: any) => {
     demoNotesCustomer.value = customer;
     showDemoNotes.value = true;
+};
+
+const openDemoNotesFromNotification = (customer: any) => {
+    if (!customer) return;
+    activeTab.value = getDemoNotesTab(customer);
+    openDemoNotes(customer);
+};
+
+const handleDemoNotesMarkedRead = ({ customerId }: { customerId: number | null }) => {
+    clearDemoNotesUnreadLocally(customerId);
+};
+
+const handleDemoNotesVisibilityChange = (visible: boolean) => {
+    showDemoNotes.value = visible;
+    if (!visible) {
+        demoNotesCustomer.value = null;
+        void refreshUnreadCounts();
+    }
 };
 
 watch(selectedStaffStatus, (val) => {
@@ -591,12 +741,6 @@ const updateStaffStatus = async (customerId: number, status: string, demoPresent
             life: 2000,
         });
 
-        // 🚫 REMOVE FROM UI IF CANCELLED
-        if (status === "Cancelled") {
-            customers.value = customers.value.filter(c => c.id !== customerId);
-            return;
-        }
-
         // Otherwise update status normally
         const customer = customers.value.find(c => c.id === customerId);
         if (customer) customer.staff_status = status;
@@ -627,11 +771,15 @@ const showAssignedUserFilter = computed(() =>
 
 const showDemoPresenterFilter = computed(() =>
     (currentUser.value?.role === 'admin' || currentUser.value?.role === 'staff') &&
-    (activeTab.value === 'Need To Show Demo' || activeTab.value === 'Demo Done' || activeTab.value === 'Cancelled')
+    (activeTab.value === 'Need To Show Demo' || activeTab.value === 'Demo Pending' || activeTab.value === 'Demo Done' || activeTab.value === 'Cancelled')
 );
 
 watch(activeTab, (tab) => {
-    if (tab !== 'Need To Show Demo' && tab !== 'Demo Done' && tab !== 'Cancelled') filterDemoPresenter.value = null;
+    if (tab !== 'Need To Show Demo' && tab !== 'Demo Pending' && tab !== 'Demo Done' && tab !== 'Cancelled') filterDemoPresenter.value = null;
+    // Default month filter for demo reports
+    if ((tab === 'Demo Done' || tab === 'Cancelled') && !filterCreatedMonth.value) {
+        filterCreatedMonth.value = new Date();
+    }
 });
 
 const statusTabs = computed(() => {
@@ -643,6 +791,7 @@ const statusTabs = computed(() => {
         "Serious Interested",
         "Call For Demo",
         "Need To Show Demo",
+        "Demo Pending",
         "Demo Done",
         "Cancelled",
         "Need Direct Meeting",
@@ -663,6 +812,7 @@ const statusTabs = computed(() => {
             "Serious Interested",
             "Call For Demo",
             "Need To Show Demo",
+            "Demo Pending",
             "Demo Done",
             "Cancelled",
             "Need Direct Meeting",
@@ -728,6 +878,10 @@ const statusCount = (status: string) => {
         return baseList.filter(c => !c.staff_status || c.staff_status === "New").length;
     }
 
+    if (status === "Demo Pending") {
+        return baseList.filter(c => (c.demo_status ?? null) === "Pending").length;
+    }
+
     return baseList.filter(c => c.staff_status === status).length;
 };
 
@@ -737,7 +891,10 @@ const intOrNull = (value: any) => {
     return Number.isFinite(n) ? n : null;
 };
 
-const filteredCustomers = computed(() => {
+const getFilteredCustomers = (
+    includeAssignedUserFilter = true,
+    includeDemoPresenterFilter = true
+) => {
     let list = customers.value;
 
     // Staff can only see customers they are assigned to
@@ -803,14 +960,19 @@ const filteredCustomers = computed(() => {
         });
     }
 
-    if (filterCreatedMonth.value) {
+    // Month filter is used for demo reporting (Demo Done / Demo Cancelled)
+    if (filterCreatedMonth.value && (activeTab.value === "Demo Done" || activeTab.value === "Cancelled")) {
         const selectedMonth = new Date(filterCreatedMonth.value);
         list = list.filter(c => {
-            if (!c.created_at) return false;
-            const created = new Date(c.created_at);
+            const dateStr =
+                activeTab.value === "Demo Done"
+                    ? (c.demo_done_at ?? null)
+                    : (c.updated_at ?? null); // Cancelled change time fallback
+            if (!dateStr) return false;
+            const d = new Date(dateStr);
             return (
-                created.getFullYear() === selectedMonth.getFullYear() &&
-                created.getMonth() === selectedMonth.getMonth()
+                d.getFullYear() === selectedMonth.getFullYear() &&
+                d.getMonth() === selectedMonth.getMonth()
             );
         });
     }
@@ -830,25 +992,30 @@ const filteredCustomers = computed(() => {
         list = list.filter(c => !c.staff_status || c.staff_status === "New");
     } else if (activeTab.value === "Today Customers") {
         list = list.filter(c => c.created_at && isToday(c.created_at));
+    } else if (activeTab.value === "Demo Pending") {
+        list = list.filter(c => (c.demo_status ?? null) === "Pending");
     } else if (activeTab.value !== "All Customer") {
         list = list.filter(c => c.staff_status === activeTab.value);
     }
 
     // --- Admin: tab-specific filters ---
-    if (currentUser.value?.role === 'admin' && filterAssignedUser.value) {
+    if (includeAssignedUserFilter && currentUser.value?.role === 'admin' && filterAssignedUser.value) {
         list = list.filter(c => (intOrNull(c.assigned_staff_id) === intOrNull(filterAssignedUser.value?.id)));
     }
 
     if (
         (currentUser.value?.role === 'admin' || currentUser.value?.role === 'staff') &&
-        (activeTab.value === 'Need To Show Demo' || activeTab.value === 'Demo Done' || activeTab.value === 'Cancelled') &&
+        (activeTab.value === 'Need To Show Demo' || activeTab.value === 'Demo Pending' || activeTab.value === 'Demo Done' || activeTab.value === 'Cancelled') &&
+        includeDemoPresenterFilter &&
         filterDemoPresenter.value
     ) {
         list = list.filter(c => (intOrNull(c.demo_presenter_id) === intOrNull(filterDemoPresenter.value?.id)));
     }
 
     return list;
-});
+};
+
+const filteredCustomers = computed(() => getFilteredCustomers(true, true));
 
 const showFilteredCount = computed(() => {
     // Show badge only if any filter is applied or search query exists
@@ -864,6 +1031,39 @@ const showFilteredCount = computed(() => {
 
 const filteredCount = computed(() => filteredCustomers.value.length);
 
+const demoNoteNotifications = computed(() =>
+    customers.value
+        .filter((customer: any) => Number(customer?.demo_notes_unread ?? 0) > 0)
+        .map((customer: any) => ({
+            ...customer,
+            unreadCount: Number(customer.demo_notes_unread ?? 0),
+            notificationTab: getDemoNotesTab(customer),
+            notificationTabLabel: getDemoNotesTabLabel(customer),
+        }))
+        .sort((left: any, right: any) => {
+            if (right.unreadCount !== left.unreadCount) {
+                return right.unreadCount - left.unreadCount;
+            }
+
+            return new Date(right.updated_at ?? right.created_at ?? 0).getTime()
+                - new Date(left.updated_at ?? left.created_at ?? 0).getTime();
+        })
+);
+
+const clearFilters = () => {
+    filterCreatedBy.value = null;
+    filterCreatedDate.value = null;
+    filterAssignedUser.value = null;
+    filterDemoPresenter.value = null;
+
+    // Default month filter for demo reports
+    if (activeTab.value === "Demo Done" || activeTab.value === "Cancelled") {
+        filterCreatedMonth.value = new Date();
+    } else {
+        filterCreatedMonth.value = null;
+    }
+};
+
 const formattedUsers = computed(() =>
     users.value.map(u => ({
         ...u,
@@ -871,6 +1071,54 @@ const formattedUsers = computed(() =>
         value: u.id
     }))
 );
+
+const assignedUserOptions = computed(() => {
+    const list = getFilteredCustomers(false, true);
+
+    const ids = new Set<number>();
+    list.forEach((c: any) => {
+        const id = intOrNull(c?.assigned_staff_id ?? c?.assigned_staff?.id ?? c?.assigned_users?.[0]?.id);
+        if (id !== null) ids.add(id);
+    });
+
+    const options = formattedUsers.value.filter((u: any) => {
+        const id = intOrNull(u?.id ?? u?.value);
+        return id !== null && ids.has(id);
+    });
+
+    // Keep currently selected value visible even if it doesn't match current table rows
+    const selectedId = intOrNull(filterAssignedUser.value?.id);
+    if (selectedId !== null && !options.some((u: any) => intOrNull(u?.id ?? u?.value) === selectedId)) {
+        const selected = formattedUsers.value.find((u: any) => intOrNull(u?.id ?? u?.value) === selectedId);
+        if (selected) options.unshift(selected);
+    }
+
+    return options;
+});
+
+const demoPresenterOptions = computed(() => {
+    const list = getFilteredCustomers(true, false);
+
+    const ids = new Set<number>();
+    list.forEach((c: any) => {
+        const id = intOrNull(c?.demo_presenter_id ?? c?.demo_presenter?.id);
+        if (id !== null) ids.add(id);
+    });
+
+    const options = demoPresenters.value.filter((p: any) => {
+        const id = intOrNull(p?.id);
+        return id !== null && ids.has(id);
+    });
+
+    // Keep currently selected value visible even if it doesn't match current table rows
+    const selectedId = intOrNull(filterDemoPresenter.value?.id);
+    if (selectedId !== null && !options.some((p: any) => intOrNull(p?.id) === selectedId)) {
+        const selected = demoPresenters.value.find((p: any) => intOrNull(p?.id) === selectedId);
+        if (selected) options.unshift(selected);
+    }
+
+    return options;
+});
 
 const getDemoPresenterName = (row: any) => {
     if (!row) return "-";
@@ -949,14 +1197,14 @@ const historyEntries = (oldData: any): Array<[string, any]> => {
 };
 
 // Table columns
-const columns = [
+const baseColumns = [
     { key: "sn", label: "SN", align: "center" },
     { key: "name", label: "Name", align: "left" },
-    { key: "created_info", label: "Created By", align: "center" },
+    { key: "numbers", label: "Numbers", align: "center" },
     { key: "service_type", label: "Service Type", align: "center" },
     { key: "next_follow_up_date", label: "Next Follow Up", align: "center" },
     { key: "staff_status", label: "Staff Status", align: "center", type: "select" },
-    { key: "numbers", label: "Numbers", align: "center" },
+    { key: "created_info", label: "Created By", align: "center" },
     { key: "email", label: "Email", align: "left" },
     { key: "shop_type", label: "Shop Type", align: "center" },
     { key: "locations", label: "Locations", align: "center" },
@@ -973,6 +1221,17 @@ const columns = [
     // NEW actions column
 ];
 
+const columns = computed(() => {
+    // Sales staff:
+    // - Today Customers tab: hide full Staff Status column
+    // - Other tabs: show column, but value is visible only for assigned customers (handled in slot)
+    if (currentUser.value?.role === "staff" && activeTab.value === "Today Customers") {
+        return baseColumns.filter((c) => c.key !== "staff_status");
+    }
+
+    return baseColumns;
+});
+
 const tableRows = computed(() =>
     filteredCustomers.value.map((c, index) => ({ sn: index + 1, ...c }))
 );
@@ -983,6 +1242,17 @@ onMounted(async () => {
     await fetchCurrentUser();
     await fetchServiceTypes(); // 👈 add this
     fetchNewCustomers();
+
+    unreadRefreshTimer.value = setInterval(() => {
+        void refreshUnreadCounts();
+    }, 10000);
+});
+
+onBeforeUnmount(() => {
+    if (unreadRefreshTimer.value) {
+        clearInterval(unreadRefreshTimer.value);
+        unreadRefreshTimer.value = null;
+    }
 });
 
 const getStaffName = (staffId: number | null, fallback = '-') => {
@@ -1030,6 +1300,65 @@ const getDemoAssignedAt = (customerId: number) => demoAssignedAtMap.value[custom
                 <p class="mt-1 text-gray-600 text-sm">
                     Showing all customers lists.
                 </p>
+            </div>
+
+            <div
+                v-if="demoNoteNotifications.length"
+                class="sticky top-2 z-20 mb-5 rounded-2xl border border-red-200 bg-white p-4 shadow-sm"
+            >
+                <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                    <div>
+                        <div class="flex flex-wrap items-center gap-2">
+                            <span class="inline-flex h-9 w-9 items-center justify-center rounded-full bg-red-100 text-red-600">
+                                <i class="pi pi-bell text-sm"></i>
+                            </span>
+                            <div>
+                                <h2 class="text-base font-semibold text-gray-900">Unread Demo Note Messages</h2>
+                                <p class="text-sm text-gray-600">
+                                    {{ demoNoteNotifications.length }} customer{{ demoNoteNotifications.length > 1 ? 's have' : ' has' }} unread demo-note chat messages.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <button
+                        type="button"
+                        class="inline-flex items-center justify-center rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-700"
+                        @click="openDemoNotesFromNotification(demoNoteNotifications[0])"
+                    >
+                        <i class="pi pi-comments mr-2"></i>
+                        Open Top Unread
+                    </button>
+                </div>
+
+                <div class="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                    <button
+                        v-for="customer in demoNoteNotifications"
+                        :key="customer.id"
+                        type="button"
+                        class="flex w-full items-start justify-between gap-3 rounded-2xl border border-red-100 bg-red-50/70 p-4 text-left transition hover:border-red-300 hover:bg-red-50"
+                        @click="openDemoNotesFromNotification(customer)"
+                    >
+                        <div class="min-w-0">
+                            <div class="flex flex-wrap items-center gap-2">
+                                <span class="font-semibold text-gray-900 break-words">{{ customer.name || 'Customer' }}</span>
+                                <span class="inline-flex items-center rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-red-700">
+                                    {{ customer.notificationTabLabel }}
+                                </span>
+                            </div>
+                            <p class="mt-1 text-sm text-gray-600">
+                                Customer ID: {{ customer.id }}
+                            </p>
+                            <p class="mt-1 text-sm text-gray-700">
+                                Click to open this customer's demo note chat.
+                            </p>
+                        </div>
+
+                        <span class="inline-flex min-w-8 items-center justify-center rounded-full bg-red-600 px-2 py-1 text-xs font-semibold text-white">
+                            {{ customer.unreadCount }}
+                        </span>
+                    </button>
+                </div>
             </div>
 
             <div class="flex justify-between items-center mb-4">
@@ -1090,8 +1419,9 @@ const getDemoAssignedAt = (customerId: number) => demoAssignedAtMap.value[custom
                         </label>
                         <Multiselect
                             v-model="filterAssignedUser"
-                            :options="formattedUsers"
+                            :options="assignedUserOptions"
                             label="label"
+                            :show-labels="false"
                             track-by="id"
                             placeholder="Select assigned staff"
                             :searchable="true"
@@ -1109,8 +1439,9 @@ const getDemoAssignedAt = (customerId: number) => demoAssignedAtMap.value[custom
                         </label>
                         <Multiselect
                             v-model="filterDemoPresenter"
-                            :options="demoPresenters"
+                            :options="demoPresenterOptions"
                             label="label"
+                            :show-labels="false"
                             track-by="id"
                             placeholder="Select demo presenter"
                             :searchable="true"
@@ -1149,7 +1480,7 @@ const getDemoAssignedAt = (customerId: number) => demoAssignedAtMap.value[custom
 
                     <!-- Clear Button -->
                     <div class="flex items-end">
-                        <button @click="filterCreatedBy = null; filterCreatedDate = null; filterCreatedMonth = null; filterAssignedUser = null; filterDemoPresenter = null" class="
+                        <button @click="clearFilters" class="
                         h-[42px]
                         px-6
                         rounded-lg
@@ -1197,11 +1528,17 @@ const getDemoAssignedAt = (customerId: number) => demoAssignedAtMap.value[custom
                                     </button>
 
                                     <!-- Add Note -->
-                                    <button class="w-7 h-7 flex items-center justify-center
+                                    <button class="relative w-7 h-7 flex items-center justify-center
                                         rounded-md bg-blue-50 text-blue-600
                                         hover:bg-blue-100 hover:text-blue-700
                                         transition" title="Add Note" @click="openNoteModal(row)">
                                         <i class="pi pi-pencil text-xs"></i>
+                                        <span
+                                            v-if="row.customer_notes_unread > 0"
+                                            class="absolute -top-2 -right-2 min-w-5 h-5 px-1 rounded-full bg-red-600 text-white text-[10px] flex items-center justify-center"
+                                        >
+                                            {{ row.customer_notes_unread }}
+                                        </span>
                                     </button>
 
                                     <!-- Demo Notes (chat) -->
@@ -1243,8 +1580,14 @@ const getDemoAssignedAt = (customerId: number) => demoAssignedAtMap.value[custom
                             </div>
 
                             <!-- Staff Status -->
-                            <span class="text-xs font-semibold text-gray-500">
-                                {{ row.staff_status || '-' }}
+                            <span
+                                v-if="!(
+                                    currentUser?.role === 'staff' &&
+                                    (activeTab === 'Today Customers' || row.assigned_staff_id !== currentUser.id)
+                                )"
+                                class="text-xs font-semibold text-gray-500"
+                            >
+                                {{ row.staff_status || row.status || '-' }}
                             </span>
 
                             <span v-if="row.staff_status === 'Need To Show Demo' && (row.demo_presenter || row.demo_presenter_id)"
@@ -1271,7 +1614,7 @@ const getDemoAssignedAt = (customerId: number) => demoAssignedAtMap.value[custom
                     <template #cell-created_info="{ row }">
                         <div class="flex flex-col items-center text-sm">
                             <span class="font-medium text-gray-800">
-                                {{ getStaffName(row.created_by) }} ({{ getStaffMobile(row.created_by) }})
+                                {{ getStaffName(row.created_by) }} <br> ({{ getStaffMobile(row.created_by) }})
                             </span>
                             <span class="text-xs text-gray-500">
                                 {{ formatDate(row.created_at) }}
@@ -1294,13 +1637,37 @@ const getDemoAssignedAt = (customerId: number) => demoAssignedAtMap.value[custom
                     </template>
 
                     <template #cell-staff_status="{ row }">
-                        <div class="flex items-center justify-center gap-2">
-                            <span>{{ row.staff_status || '-' }}</span>
-                            <button @click="openStaffStatusModal(row)" class="text-blue-600 hover:text-blue-800">
-                                <i class="pi pi-pencil"></i>
-                            </button>
+                        <div class="flex items-center justify-center gap-2"
+                        >
+                            <!-- Sales staff: show status only when assigned to them -->
+                            <template v-if="currentUser?.role === 'staff'">
+                                <span v-if="row.assigned_staff_id === currentUser.id">
+                                    {{ row.staff_status || row.status || 'New' }}
+                                </span>
+                                <span v-else>-</span>
+
+                                <button
+                                    v-if="row.assigned_staff_id === currentUser.id"
+                                    @click="openStaffStatusModal(row)"
+                                    class="text-blue-600 hover:text-blue-800"
+                                    title="Update Staff Status"
+                                >
+                                    <i class="pi pi-pencil"></i>
+                                </button>
+                            </template>
+
+                            <!-- Admin: always show + can edit -->
+                            <template v-else>
+                                <span>{{ row.staff_status || row.status || 'New' }}</span>
+                                <button @click="openStaffStatusModal(row)" class="text-blue-600 hover:text-blue-800">
+                                    <i class="pi pi-pencil"></i>
+                                </button>
+                            </template>
                         </div>
+
+                        <!-- <span v-else>-</span> -->
                     </template>
+
 
                     <!-- Numbers -->
                     <template #cell-numbers="{ row }">
@@ -1353,6 +1720,12 @@ const getDemoAssignedAt = (customerId: number) => demoAssignedAtMap.value[custom
                                 class="flex items-center gap-1 px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700"
                                 @click="openNoteModal(row)">
                                 <i class="pi pi-plus"></i> Note
+                                <span
+                                    v-if="row.customer_notes_unread > 0"
+                                    class="inline-flex min-w-5 items-center justify-center rounded-full bg-red-600 px-1.5 text-[10px] text-white"
+                                >
+                                    {{ row.customer_notes_unread }}
+                                </span>
                             </button>
                         </div>
                     </template>
@@ -1368,7 +1741,7 @@ const getDemoAssignedAt = (customerId: number) => demoAssignedAtMap.value[custom
                         Select Staff
                     </label>
 
-                    <Multiselect v-model="selectedStaff" :options="formattedUsers" label="label" track-by="id"
+                    <Multiselect v-model="selectedStaff" :options="formattedUsers" label="label" :show-labels="false" track-by="id"
                         placeholder="Select staff" :searchable="true" :close-on-select="true" :allow-empty="false"
                         class="w-full h-auto" />
                 </div>
@@ -1418,7 +1791,7 @@ const getDemoAssignedAt = (customerId: number) => demoAssignedAtMap.value[custom
                     <div class="flex flex-col gap-2">
                         <label class="font-semibold text-gray-700">Select Old Service Types</label>
                         <Multiselect v-model="selectedOldServiceTypes" :options="allServiceTypeOptions"
-                            placeholder="Select old service types" :multiple="true" :close-on-select="false"
+                            placeholder="Select old service types" :multiple="true" :close-on-select="false" :show-labels="false"
                             :clear-on-select="false" class="w-full" />
                     </div>
 
@@ -1483,6 +1856,7 @@ const getDemoAssignedAt = (customerId: number) => demoAssignedAtMap.value[custom
                             v-model="selectedDemoPresenter"
                             :options="demoPresenters"
                             label="label"
+                            :show-labels="false"
                             track-by="id"
                             placeholder="Select demo presenter"
                             :searchable="true"
@@ -1560,40 +1934,40 @@ const getDemoAssignedAt = (customerId: number) => demoAssignedAtMap.value[custom
             </Dialog>
 
             <Dialog v-model:visible="showHistoryModal" modal :header="modalTitle"
-                :style="{ width: '60rem', maxHeight: '80vh' }" class="overflow-hidden rounded-xl shadow-2xl">
-                <div class="overflow-y-auto px-6 py-5 relative">
+                :style="{ width: '60rem', maxWidth: '95vw', maxHeight: '80vh' }" class="overflow-hidden rounded-xl shadow-2xl">
+                <div class="relative overflow-y-auto px-3 py-4 sm:px-6 sm:py-5">
 
                     <!-- Timeline Container -->
                     <div v-if="historyData.length" class="relative">
 
                         <!-- Vertical line connecting all dots -->
-                        <div class="absolute left-1.5 top-2 bottom-0 w-1 bg-gray-200 rounded-full"></div>
+                        <div class="absolute bottom-0 left-1.5 top-2 w-1 rounded-full bg-gray-200 sm:left-1.5"></div>
 
                         <template v-for="(item, idx) in historyData" :key="item.id">
-                            <div class="relative flex items-start gap-8 group">
+                            <div class="group relative flex items-start gap-3 sm:gap-8">
 
                                 <!-- Timeline Dot -->
-                                <div class="flex flex-col items-center z-10">
-                                    <div class="w-4 h-4 rounded-full shadow relative top-2"
+                                <div class="z-10 flex flex-col items-center self-stretch">
+                                    <div class="relative top-2 h-4 w-4 rounded-full shadow"
                                         :class="item.note === 'Customer created' ? 'bg-green-500' : 'bg-indigo-600'">
                                     </div>
                                     <!-- Connecting line -->
-                                    <div v-if="idx !== historyData.length - 1" class="flex-1 w-1 bg-gray-200"></div>
+                                    <div v-if="idx !== historyData.length - 1" class="w-1 flex-1 bg-gray-200"></div>
                                 </div>
 
                                 <!-- History Card -->
-                                <div class="flex-1 bg-white p-5 rounded-xl shadow border-l-4 relative -top-1 mb-5"
+                                <div class="relative mb-5 flex-1 rounded-xl border-l-4 bg-white p-3 shadow sm:-top-1 sm:p-5"
                                     :class="item.note === 'Customer created' ? 'border-green-500' : 'border-indigo-600'">
 
                                     <!-- Created Customer Card -->
                                     <div v-if="item.note === 'Customer created' || item.customer_name">
-                                        <div class="flex justify-between items-center mb-3">
-                                            <span class="text-green-600 font-bold">Customer Created</span>
-                                            <span class="text-green-600 text-sm font-medium">
+                                        <div class="mb-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                                            <span class="font-bold text-green-600">Customer Created</span>
+                                            <span class="text-sm font-medium text-green-600 break-words">
                                                 {{ formatDateTime(item.created_at) }}
                                             </span>
                                         </div>
-                                        <div class="grid grid-cols-2 gap-4 text-gray-700 text-sm">
+                                        <div class="grid grid-cols-1 gap-2 text-sm text-gray-700 sm:grid-cols-2 sm:gap-4">
                                             <div><strong>Name:</strong> {{ item.customer_name || '-' }}</div>
                                             <div>
                                                 <strong>Service Type:</strong>
@@ -1607,14 +1981,14 @@ const getDemoAssignedAt = (customerId: number) => demoAssignedAtMap.value[custom
                                     <!-- Staff History Card -->
                                     <div v-else>
                                         <!-- Header: Staff + Date -->
-                                        <div class="flex justify-between items-center mb-3">
-                                            <div class="flex items-center gap-3">
+                                        <div class="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                            <div class="flex items-center gap-2 sm:gap-3">
                                                 <i class="pi pi-user text-indigo-600"></i>
                                                 <span class="text-indigo-600 font-semibold text-sm">
                                                     {{ getStaffName(item.staff_id) || '-' }}
                                                 </span>
                                             </div>
-                                            <span class="text-indigo-600 text-sm font-medium">
+                                            <span class="text-indigo-600 text-sm font-medium break-words">
                                                Change Time: {{ formatDateTime(item.created_at) }}
                                             </span>
                                         </div>
@@ -1627,17 +2001,18 @@ const getDemoAssignedAt = (customerId: number) => demoAssignedAtMap.value[custom
 
                                         <!-- Changed Fields -->
                                         <div v-if="historyEntries(item.old_data).length"
-                                            class="bg-gray-50 p-4 rounded-lg border border-gray-200">
+                                            class="rounded-lg border border-gray-200 bg-gray-50 p-3 sm:p-4">
                                             <strong class="text-indigo-700">Changed Fields:</strong>
-                                            <div class="grid grid-cols-2 gap-3 mt-2 text-sm text-gray-700">
+                                            <div class="mt-2 grid grid-cols-1 gap-2 text-sm text-gray-700 sm:grid-cols-2 sm:gap-3">
                                                 <div v-for="([key, value]) in historyEntries(item.old_data)" :key="key"
-                                                    class="flex gap-2">
-                                                    <span class="font-medium capitalize">{{ key.replace(/_/g, ' ')
+                                                    class="flex flex-col gap-1 break-words sm:flex-row sm:gap-2">
+                                                    <span class="font-medium capitalize sm:min-w-28">{{ key.replace(/_/g, ' ')
                                                     }}:</span>
                                                     <span v-if="typeof value === 'string' && value.includes('<')"
+                                                        class="min-w-0 break-words"
                                                         v-html="formatHistoryValue(key, value)">
                                                     </span>
-                                                    <span v-else>{{ formatHistoryValue(key, value) }}</span>
+                                                    <span v-else class="min-w-0 break-words">{{ formatHistoryValue(key, value) }}</span>
                                                 </div>
                                             </div>
                                         </div>
@@ -1658,9 +2033,9 @@ const getDemoAssignedAt = (customerId: number) => demoAssignedAtMap.value[custom
                 </div>
 
                 <!-- Footer -->
-                <div class="text-right mt-6">
+                <div class="mt-4 flex justify-end px-3 pb-3 sm:mt-6 sm:px-6 sm:pb-5">
                     <button
-                        class="px-6 py-2 bg-indigo-600 text-white font-medium rounded-lg shadow hover:bg-indigo-700 transition"
+                        class="w-full rounded-lg bg-indigo-600 px-6 py-2 font-medium text-white shadow transition hover:bg-indigo-700 sm:w-auto"
                         @click="showHistoryModal = false">
                         Close
                     </button>
@@ -1668,14 +2043,32 @@ const getDemoAssignedAt = (customerId: number) => demoAssignedAtMap.value[custom
             </Dialog>
 
             <!-- Add Note Modal -->
-            <Dialog v-model:visible="showExtraNoteModal" header="Customer Notes &       History" :style="{ width: '50rem' }">
+            <Dialog v-model:visible="showExtraNoteModal" header="Customer Notes & History" :style="{ width: '50rem', maxWidth: '95vw' }">
                 <div class="mb-4">
                     <textarea v-model="newNote" class="w-full border rounded-lg p-3 focus:ring-2 focus:ring-blue-400"
                         rows="4" placeholder="Write a new note here..."></textarea>
                 </div>
 
                 <div class="mb-4">
-                    <h3 class="font-semibold text-gray-800 text-lg mb-2 border-b pb-1">Previous Notes</h3>
+                    <div class="mb-2 flex flex-col gap-2 border-b pb-2 sm:flex-row sm:items-center sm:justify-between">
+                        <h3 class="text-lg font-semibold text-gray-800">Previous Notes</h3>
+                        <div class="flex flex-wrap items-center gap-2">
+                            <span
+                                v-if="getCustomerNotesUnread(noteCustomerId) > 0"
+                                class="inline-flex items-center rounded-full bg-red-100 px-3 py-1 text-xs font-semibold text-red-700"
+                            >
+                                You have unread messages: {{ getCustomerNotesUnread(noteCustomerId) }}
+                            </span>
+                            <button
+                                type="button"
+                                class="rounded-lg bg-red-600 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                :disabled="markingCustomerNotesRead || getCustomerNotesUnread(noteCustomerId) === 0"
+                                @click="markCustomerNotesRead"
+                            >
+                                {{ markingCustomerNotesRead ? 'Marking...' : 'Mark Read' }}
+                            </button>
+                        </div>
+                    </div>
                     <div v-if="customerHistory.length" class="space-y-3">
 
                         <div v-for="(h, idx) in customerHistory" :key="h.id" class="relative p-4 rounded-xl
@@ -1684,10 +2077,15 @@ const getDemoAssignedAt = (customerId: number) => demoAssignedAtMap.value[custom
                             shadow-sm hover:shadow-md transition">
 
                             <!-- Header -->
-                            <div class="flex justify-between items-center mb-2">
-                                <span class="text-sm text-gray-500">
-                                    {{ new Date(h.created_at).toLocaleString() }}
-                                </span>
+                            <div class="mb-2 flex items-start justify-between gap-3">
+                                <div class="flex min-w-0 flex-col">
+                                    <span class="text-sm font-semibold text-gray-800">
+                                        {{ getNoteAuthorName(h) }}
+                                    </span>
+                                    <span class="text-sm text-gray-500 break-words">
+                                        {{ new Date(h.created_at).toLocaleString() }}
+                                    </span>
+                                </div>
 
                                 <div class="flex items-center gap-2">
 
@@ -1724,6 +2122,10 @@ const getDemoAssignedAt = (customerId: number) => demoAssignedAtMap.value[custom
 
                     </div>
 
+                    <div v-else-if="openingCustomerNotes" class="text-center text-gray-500 py-6">
+                        Loading notes...
+                    </div>
+
                     <div v-else class="text-center text-gray-500 py-6">
                         No notes available
                     </div>
@@ -1741,18 +2143,9 @@ const getDemoAssignedAt = (customerId: number) => demoAssignedAtMap.value[custom
                 :visible="showDemoNotes"
                 :customerId="demoNotesCustomer?.id ?? null"
                 :customerName="demoNotesCustomer?.name ?? ''"
-                @update:visible="(v:boolean) => {
-                    showDemoNotes = v;
-                    if (!v) {
-                        const id = demoNotesCustomer?.id;
-                        if (id) {
-                            const c = customers.find((x:any) => x.id === id);
-                            if (c) c.demo_notes_unread = 0;
-                        }
-                        demoNotesCustomer = null;
-                        fetchNewCustomers();
-                    }
-                }"
+                :unreadCount="getDemoNotesUnread(demoNotesCustomer?.id ?? null)"
+                @marked-read="handleDemoNotesMarkedRead"
+                @update:visible="handleDemoNotesVisibilityChange"
             />
 
         </div>

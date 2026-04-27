@@ -42,6 +42,19 @@ class CustomerController extends Controller
                     0
                 )
             ) as demo_notes_unread"));
+
+            $query->addSelect(DB::raw("(
+                select count(*) from customer_histories h
+                where h.customer_id = customers.id
+                and h.note is not null
+                and h.staff_id <> {$userId}
+                and h.id > coalesce(
+                    (select last_read_history_id from customer_history_reads r
+                     where r.customer_id = customers.id and r.user_id = {$userId}
+                     limit 1),
+                    0
+                )
+            ) as customer_notes_unread"));
         }
 
         if (auth()->user()->role === 'staff') {

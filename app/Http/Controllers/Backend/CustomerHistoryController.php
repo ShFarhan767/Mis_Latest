@@ -6,14 +6,41 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use App\Models\Customer;
 use App\Models\CustomerHistory;
+use App\Models\CustomerHistoryRead;
 use Illuminate\Support\Facades\Auth;
 
 class CustomerHistoryController extends Controller
 {
+    private function canAccess(Customer $customer): bool
+    {
+        $user = Auth::user();
+        if (!$user) {
+            return false;
+        }
+
+        if ($user->role === 'admin') {
+            return true;
+        }
+
+        if ($user->role === 'staff') {
+            return (int)$customer->assigned_staff_id === (int)$user->id
+                || (int)$customer->created_by === (int)$user->id;
+        }
+
+        if ($user->role === 'demo_presenter') {
+            return (int)$customer->demo_presenter_id === (int)$user->id;
+        }
+
+        return false;
+    }
+
     // Add note (also tracks changes)
     public function addNote(Request $request, $customerId)
     {
         $customer = Customer::findOrFail($customerId);
+        if (!$this->canAccess($customer)) {
+            return response()->json(['message' => 'Forbidden'], 403);
+        }
 
         $trackFields = [
             'name', 'designation', 'email', 'shop_type', 'locations', 'lead_source',
@@ -128,6 +155,9 @@ class CustomerHistoryController extends Controller
     public function getHistory($customerId)
     {
         $customer = Customer::findOrFail($customerId);
+        if (!$this->canAccess($customer)) {
+            return response()->json(['message' => 'Forbidden'], 403);
+        }
 
         $history = CustomerHistory::where('customer_id', $customerId)
                     ->with('staff')
@@ -184,10 +214,15 @@ class CustomerHistoryController extends Controller
     // Fetch only notes for Add Note modal
     public function getNotes($customerId)
     {
+        $customer = Customer::findOrFail($customerId);
+        if (!$this->canAccess($customer)) {
+            return response()->json(['message' => 'Forbidden'], 403);
+        }
+
         $notes = CustomerHistory::where('customer_id', $customerId)
                     ->whereNotNull('note')
                     ->with('staff')
-                    ->orderBy('created_at', 'desc')
+                    ->orderBy('id', 'asc')
                     ->get();
 
         return response()->json($notes);
@@ -200,6 +235,11 @@ class CustomerHistoryController extends Controller
         ]);
 
         $history = CustomerHistory::findOrFail($historyId);
+        $customer = $history->customer;
+
+        if (!$customer || !$this->canAccess($customer)) {
+            return response()->json(['message' => 'Forbidden'], 403);
+        }
 
         $history->update([
             'note' => $request->note
@@ -211,5 +251,33 @@ class CustomerHistoryController extends Controller
         ]);
 
         return response()->json(['message' => 'Note updated']);
+    }
+
+    public function markRead($customerId)
+    {
+        $customer = Customer::findOrFail($customerId);
+        if (!$this->canAccess($customer)) {
+            return response()->json(['message' => 'Forbidden'], 403);
+        }
+
+        $latestId = (int) CustomerHistory::query()
+            ->where('customer_id', $customerId)
+            ->whereNotNull('note')
+            ->max('id');
+
+        CustomerHistoryRead::updateOrCreate(
+            [
+                'customer_id' => $customerId,
+                'user_id' => Auth::id(),
+            ],
+            [
+                'last_read_history_id' => $latestId,
+            ]
+        );
+
+        return response()->json([
+            'message' => 'Marked as read',
+            'last_read_history_id' => $latestId,
+        ]);
     }
 }

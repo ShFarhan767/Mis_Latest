@@ -3,7 +3,7 @@ import NavUser from '@/components/NavUser.vue';
 import Breadcrumbs from '@/components/Breadcrumbs.vue';
 import { SidebarTrigger } from '@/components/ui/sidebar';
 import { ref, onMounted, onBeforeUnmount } from 'vue';
-import { Search, X } from 'lucide-vue-next';
+import { Menu } from 'lucide-vue-next';
 import { usePage } from '@inertiajs/vue3';
 import type { BreadcrumbItemType } from '@/types';
 
@@ -53,15 +53,21 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-    <header class="flex h-16 shrink-0 items-center border-b border-sidebar-border/70 px-6 md:px-4 transition-all">
+    <header
+        class="sticky top-0 z-30 flex min-h-16 shrink-0 items-center border-b border-slate-200 bg-white px-4 text-slate-900 shadow-none md:px-4 md:bg-white md:text-slate-900 md:shadow-none max-md:border-white/60 max-md:bg-gradient-to-r max-md:from-cyan-500 max-md:via-sky-500 max-md:to-emerald-500 max-md:text-white max-md:shadow-[0_10px_30px_-18px_rgba(14,165,233,0.85)]"
+    >
 
         <!-- Left: Sidebar + Breadcrumbs -->
         <div class="flex items-center gap-3">
-            <SidebarTrigger class="-ml-1" />
+            <div class="flex items-center gap-2 px-2 py-1 md:bg-transparent md:px-0 md:py-0 md:ring-0">
+                <SidebarTrigger
+                    class="-ml-1 h-10 w-10 bg-white text-sky-700 transition hover:bg-sky-50 md:h-8 md:w-8 md:bg-transparent md:text-slate-700 md:shadow-none md:hover:bg-slate-100"
+                />
+            </div>
 
-            <template v-if="breadcrumbs && breadcrumbs.length > 0">
+            <div v-if="breadcrumbs && breadcrumbs.length > 0" class="hidden md:block">
                 <Breadcrumbs :breadcrumbs="breadcrumbs" />
-            </template>
+            </div>
         </div>
 
         <!-- Right: Search + User -->

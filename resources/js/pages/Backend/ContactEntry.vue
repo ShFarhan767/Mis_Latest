@@ -854,9 +854,14 @@ const removeNumberField = (index: number) => {
 
 const validateEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
+// Use local date (YYYY-MM-DD) to avoid timezone shifting (off-by-one day).
 const toMySQL = (date: any) => {
     if (!date) return null;
-    return new Date(date).toISOString().slice(0, 19).replace("T", " ");
+    const d = new Date(date);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
 };
 
 const resetForm = () => {
@@ -950,7 +955,7 @@ const editCustomer = (cust: any) => {
         offerOptions.value.find(o => o.label === cust.offer_connect) || null;
 
     customer.value.nextFollowUpDate = cust.next_follow_up_date
-        ? new Date(cust.next_follow_up_date)
+        ? new Date(`${cust.next_follow_up_date}T00:00:00`)
         : null;
 
     customer.value.status = cust.status;
@@ -1564,19 +1569,19 @@ const formatHistoryValue = (key: string, value: any) => {
                     </div>
 
                     <form @submit.prevent="submitForm"
-                        class="space-y-6 bg-white p-6 rounded-xl shadow-lg w-full md:w-3/4 mx-auto">
+                        class="contact-form-shell mx-auto w-full space-y-5 rounded-[2rem] border border-slate-200 bg-white/95 p-4 shadow-lg shadow-slate-200/70 backdrop-blur md:w-3/4 md:space-y-6 md:rounded-2xl md:p-6">
 
                         <!-- 1️⃣ NAME & DESIGNATION (Top - No Change) -->
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div class="contact-form-section grid grid-cols-1 gap-4 md:grid-cols-2">
                             <div class="mt-1">
-                                <label class="block mb-2 font-medium">Name <span class="text-red-600">*</span></label>
+                                <label class="contact-form-label">Name <span class="text-red-600">*</span></label>
                                 <InputText v-model="customer.name" placeholder="Enter full name"
-                                    class="w-full border rounded-lg p-2" />
+                                    class="contact-form-input w-full rounded-xl border p-2.5" />
                             </div>
 
                             <div>
                                 <div class="flex justify-between items-center mb-1">
-                                    <label class="font-medium">Designation</label>
+                                    <label class="contact-form-label mb-0">Designation</label>
                                     <Button v-if="props.userRole === 'admin'" icon="pi pi-plus"
                                         class="p-button-rounded p-button-sm p-button-success"
                                         @click="showDesignationModal = true" />
@@ -1589,70 +1594,73 @@ const formatHistoryValue = (key: string, value: any) => {
                         </div>
 
                         <!-- 2️⃣ NUMBER (Required – modern UX version) -->
-                        <div>
-                            <label class="block mb-1 font-semibold text-gray-700">
+                        <div class="contact-form-section">
+                            <label class="contact-form-label">
                                 Numbers <span class="text-red-600">*</span>
                             </label>
 
                             <!-- INPUT AREA -->
-                            <div class="flex items-center gap-3 mb-4 p-4 border rounded-xl shadow-sm bg-white">
+                            <div class="mb-4 rounded-xl border bg-white p-3 shadow-sm sm:p-4">
 
                                 <!-- COUNTRY SELECT -->
-                                <Multiselect v-model="customer.newCountry" :options="countryList" :searchable="true"
-                                    placeholder="" track-by="dial_code" :custom-label="countryLabel"
-                                    :show-labels="false" :internal-search="true" :close-on-select="true"
-                                    :allow-empty="true" class="min-w-26"
-                                    style="width: 100px !important; min-width:100px !important;">
-                                    <!-- OPTIONS -->
-                                    <template #option="props">
-                                        <div class="flex items-center gap-2 py-1">
-                                            <img v-if="props.option.flagPng" :src="props.option.flagPng"
-                                                class="w-4 h-3 rounded-sm" />
-                                            <span class="font-semibold text-sm">{{ props.option.dial_code }}</span>
+                                <div class="flex flex-col gap-3 md:flex-row md:items-center">
+                                    <Multiselect v-model="customer.newCountry" :options="countryList" :searchable="true"
+                                        placeholder="" track-by="dial_code" :custom-label="countryLabel"
+                                        :show-labels="false" :internal-search="true" :close-on-select="true"
+                                        :allow-empty="true" class="w-full md:w-[100px] md:min-w-[100px] md:max-w-[100px] md:flex-none"
+                                        style="min-width: 0;">
+                                        <template #option="props">
+                                            <div class="flex items-center gap-2 py-1">
+                                                <img v-if="props.option.flagPng" :src="props.option.flagPng"
+                                                    class="h-3 w-4 rounded-sm" />
+                                                <span class="font-semibold text-sm">{{ props.option.dial_code }}</span>
+                                            </div>
+                                        </template>
+
+                                        <template #singleLabel="props">
+                                            <div class="flex items-center gap-1">
+                                                <img v-if="props.option.flagPng" :src="props.option.flagPng"
+                                                    class="h-3 w-5 rounded-sm" />
+                                                <span class="font-semibold text-sm">{{ props.option.dial_code }}</span>
+                                            </div>
+                                        </template>
+
+                                        <template #caret><span></span></template>
+                                        <template #clear><span></span></template>
+                                    </Multiselect>
+
+                                    <div class="flex min-w-0 flex-1 flex-col gap-3 md:flex-row md:items-center">
+                                        <div class="min-w-0 flex-1">
+                                            <InputText v-model="customer.newNumber" :placeholder="phonePlaceholder"
+                                                @input="formatNumber" class="w-full rounded-xl p-3 shadow-inner" />
+
+                                            <p v-if="phoneError" class="mt-1 text-sm text-red-500">
+                                                {{ phoneError }}
+                                            </p>
+
+                                            <p v-else-if="customer.newNumber && numberExists" class="mt-1 text-sm text-red-500">
+                                                This number is already used!
+                                            </p>
                                         </div>
-                                    </template>
 
-                                    <!-- SELECTED -->
-                                    <template #singleLabel="props">
-                                        <div class="flex items-center gap-1">
-                                            <img v-if="props.option.flagPng" :src="props.option.flagPng"
-                                                class="w-5 h-3 rounded-sm" />
-                                            <span class="font-semibold text-sm">{{ props.option.dial_code }}</span>
+                                        <div class="flex w-full gap-2 md:w-auto md:min-w-[13rem]">
+                                            <Dropdown v-model="customer.newNumberType" :options="[
+                                                { label: 'Call', value: 'call' },
+                                                { label: 'WhatsApp', value: 'whatsapp' },
+                                                { label: 'Both', value: 'both' }
+                                            ]" optionLabel="label" optionValue="value" class="min-w-0 flex-1 md:w-32"
+                                                placeholder="Type" />
+
+                                            <Button icon="pi pi-plus"
+                                                class="p-button-success flex-shrink-0 shadow px-4"
+                                                :disabled="!!phoneError || numberExists || !customer.newNumber"
+                                                @click="addNumberField" />
                                         </div>
-                                    </template>
-
-                                    <template #caret><span></span></template>
-                                    <template #clear><span></span></template>
-                                </Multiselect>
-
-                                <!-- NUMBER INPUT -->
-                                <div class="w-full">
-                                    <InputText v-model="customer.newNumber" :placeholder="phonePlaceholder"
-                                        @input="formatNumber" class="flex-1 p-3 w-full rounded-xl shadow-inner" />
-
-                                    <p v-if="phoneError" class="text-red-500 text-sm mt-1">
-                                        {{ phoneError }}
-                                    </p>
-
-                                    <p v-else-if="customer.newNumber && numberExists" class="text-red-500 text-sm mt-1">
-                                        This number is already used!
-                                    </p>
+                                    </div>
                                 </div>
-
-                                <!-- TYPE DROPDOWN -->
-                                <Dropdown v-model="customer.newNumberType" :options="[
-                                    { label: 'Call', value: 'call' },
-                                    { label: 'WhatsApp', value: 'whatsapp' },
-                                    { label: 'Both', value: 'both' }
-                                ]" optionLabel="label" optionValue="value" class="w-32" placeholder="Type" />
-
-                                <!-- ADD BUTTON -->
-                                <Button icon="pi pi-plus" class="p-button-success shadow px-4"
-                                    :disabled="!!phoneError || numberExists || !customer.newNumber"
-                                    @click="addNumberField" />
                             </div>
 
-                            <div v-if="matchedCustomer" class="overflow-x-auto mt-2">
+                            <div v-if="matchedCustomer" class="mt-2 overflow-x-auto rounded-2xl border border-emerald-100 bg-emerald-50/70 p-1 max-md:shadow-sm">
                                 <table class="min-w-full text-sm bg-white border rounded-lg shadow-sm">
                                     <thead class="bg-green-500 text-white">
                                         <tr>
@@ -1714,25 +1722,26 @@ const formatHistoryValue = (key: string, value: any) => {
 
                             <!-- SAVED NUMBERS LIST -->
                             <div v-for="(num, index) in customer.numbers" :key="index"
-                                class="flex items-center justify-between gap-3 mb-2 p-3 rounded-lg border bg-white shadow-sm">
-                                <div class="flex items-center gap-2">
+                                class="mb-2 flex flex-col gap-3 rounded-lg border bg-white p-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+                                <div class="flex min-w-0 flex-wrap items-center gap-2">
                                     <span class="text-2xl">{{ num.country.flagEmoji }}</span>
-                                    <span class="font-medium">{{ num.country.dial_code }} {{ num.number }}</span>
+                                    <span class="break-all font-medium">{{ num.country.dial_code }} {{ num.number }}</span>
                                     <span class="px-2 py-0.5 text-xs bg-gray-100 rounded border capitalize">
                                         {{ num.type }}
                                     </span>
                                 </div>
 
-                                <Button icon="pi pi-trash" class="p-button-rounded p-button-danger p-button-text"
+                                <Button icon="pi pi-trash"
+                                    class="p-button-rounded p-button-danger p-button-text self-end sm:self-auto"
                                     @click="removeNumberField(index)" />
                             </div>
                         </div>
 
                         <!-- 3️⃣ SHOP TYPE & SERVICE TYPE -->
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div class="contact-form-section grid grid-cols-1 gap-4 md:grid-cols-2">
                             <div>
                                 <div class="flex justify-between items-center mb-1">
-                                    <label class="font-medium">Shop Type <span class="text-red-600">*</span></label>
+                                    <label class="contact-form-label mb-0">Shop Type <span class="text-red-600">*</span></label>
                                     <Button v-if="props.userRole === 'admin'" icon="pi pi-plus"
                                         class="p-button-rounded p-button-sm p-button-success"
                                         @click="showShopTypeModal = true" />
@@ -1743,7 +1752,7 @@ const formatHistoryValue = (key: string, value: any) => {
 
                             <div>
                                 <div class="flex justify-between items-center mb-1">
-                                    <label class="font-medium">Service Type <span class="text-red-600">*</span></label>
+                                    <label class="contact-form-label mb-0">Service Type <span class="text-red-600">*</span></label>
                                     <Button v-if="props.userRole === 'admin'" icon="pi pi-plus"
                                         class="p-button-rounded p-button-sm p-button-success"
                                         @click="showServiceTypeModal = true" />
@@ -1755,10 +1764,10 @@ const formatHistoryValue = (key: string, value: any) => {
                         </div>
 
                         <!-- 3️⃣ COUNTRY & LOCATION -->
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div class="contact-form-section grid grid-cols-1 gap-4 md:grid-cols-2">
                             <div>
                                 <div class="flex justify-between items-center mb-1">
-                                    <label class="font-medium">Country <span class="text-red-600">*</span></label>
+                                    <label class="contact-form-label mb-0">Country <span class="text-red-600">*</span></label>
                                     <Button v-if="props.userRole === 'admin'" icon="pi pi-plus"
                                         class="p-button-rounded p-button-sm p-button-success"
                                         @click="showCountryModal = true" />
@@ -1770,7 +1779,7 @@ const formatHistoryValue = (key: string, value: any) => {
 
                             <div>
                                 <div class="flex justify-between items-center mb-1">
-                                    <label class="font-medium">Location <span class="text-red-600">*</span></label>
+                                    <label class="contact-form-label mb-0">Location <span class="text-red-600">*</span></label>
                                     <Button icon="pi pi-plus"
                                         class="p-button-rounded p-button-sm p-button-success"
                                         @click="showLocationModal = true" />
@@ -1781,10 +1790,10 @@ const formatHistoryValue = (key: string, value: any) => {
                         </div>
 
                         <!-- 4️⃣ LEAD SOURCE & INTEREST LEVEL -->
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div class="contact-form-section grid grid-cols-1 gap-4 md:grid-cols-2">
                             <div>
                                 <div class="flex justify-between items-center mb-1">
-                                    <label class="font-medium">Lead Source <span class="text-red-600">*</span></label>
+                                    <label class="contact-form-label mb-0">Lead Source <span class="text-red-600">*</span></label>
                                     <Button v-if="props.userRole === 'admin'" icon="pi pi-plus"
                                         class="p-button-rounded p-button-sm p-button-success"
                                         @click="showLeadSourceModal = true" />
@@ -1795,7 +1804,7 @@ const formatHistoryValue = (key: string, value: any) => {
 
                             <div>
                                 <div class="flex justify-between items-center mb-1">
-                                    <label class="font-medium">Interest Level <span
+                                    <label class="contact-form-label mb-0">Interest Level <span
                                             class="text-red-600">*</span></label>
                                     <Button v-if="props.userRole === 'admin'" icon="pi pi-plus"
                                         class="p-button-rounded p-button-sm p-button-success"
@@ -1806,10 +1815,10 @@ const formatHistoryValue = (key: string, value: any) => {
                             </div>
                         </div>
 
-                        <div class="grid grid-cols-1">
+                        <div class="contact-form-section grid grid-cols-1">
                             <!-- 5️⃣ FOLLOW-UP DATE -->
                             <div>
-                                <label class="block mb-1 font-medium">Next Follow-Up Date <span
+                                <label class="contact-form-label">Next Follow-Up Date <span
                                         class="text-red-600">*</span></label>
                                 <Calendar v-model="customer.nextFollowUpDate" showIcon class="w-full" />
                             </div>
@@ -1817,46 +1826,46 @@ const formatHistoryValue = (key: string, value: any) => {
 
 
                         <!-- 6️⃣ LAST DISCUSS NOTES -->
-                        <div>
-                            <label class="block mb-1 font-medium">Last Discuss Notes <span
+                        <div class="contact-form-section">
+                            <label class="contact-form-label">Last Discuss Notes <span
                                     class="text-red-600">*</span></label>
                             <Textarea v-model="customer.last_discuss_note" rows="3" :key="editingCustomerId"
-                                class="w-full border rounded-lg p-2" />
+                                class="contact-form-input w-full rounded-xl border p-2.5" />
                         </div>
 
                         <!-- 12️⃣ CLIENT BEHAVIOUR -->
-                        <div class="mb-16">
-                            <label class="block mb-1 font-medium">Client Behaviour & Sound <span
+                        <div class="contact-form-section mb-16">
+                            <label class="contact-form-label">Client Behaviour & Sound <span
                                     class="text-red-600">*</span></label>
                             <Editor v-model="customer.client_behaviour" :key="editingCustomerId"
                                 style="height: 140px;" />
                         </div>
 
                         <!-- 🔟 OUR COMMITMENT -->
-                        <div class="mt-5">
-                            <label class="block mb-1 font-medium">Our Commitment <span
+                        <div class="contact-form-section mt-5">
+                            <label class="contact-form-label">Our Commitment <span
                                     class="text-red-600">*</span></label>
-                            <Textarea v-model="customer.our_commitment" rows="3" class="w-full border rounded-lg p-2" />
+                            <Textarea v-model="customer.our_commitment" rows="3" class="contact-form-input w-full rounded-xl border p-2.5" />
                         </div>
 
                         <!-- 8️⃣ EMAIL (Moved down to non-required section) -->
-                        <div>
-                            <label class="block mb-1 font-medium">Email</label>
+                        <div class="contact-form-section">
+                            <label class="contact-form-label">Email</label>
                             <InputText v-model="customer.email" placeholder="Enter email address"
-                                class="w-full border rounded-lg p-2" />
+                                class="contact-form-input w-full rounded-xl border p-2.5" />
                         </div>
 
                         <!-- 9️⃣ FEATURE NEED -->
-                        <div class="mb-10">
-                            <label class="block mb-1 font-medium">Feature Need</label>
+                        <div class="contact-form-section mb-10">
+                            <label class="contact-form-label">Feature Need</label>
                             <Editor v-model="customer.feature_need" :key="'feature-' + editingCustomerId"
                                 style="height: 150px;" />
                         </div>
 
                         <!-- 11️⃣ OFFER CONNECT -->
-                        <div class="mt-16">
+                        <div class="contact-form-section mt-16">
                             <div class="flex justify-between items-center mb-1">
-                                <label class="font-medium">Which Offer Connect Me</label>
+                                <label class="contact-form-label mb-0">Which Offer Connect Me</label>
                                 <Button v-if="props.userRole === 'admin'" icon="pi pi-plus"
                                     class="p-button-rounded p-button-sm p-button-success"
                                     @click="showOfferModal = true" />
@@ -1867,12 +1876,12 @@ const formatHistoryValue = (key: string, value: any) => {
                         </div>
 
                         <!-- SUBMIT & RESET -->
-                        <div class="flex justify-center gap-4 mt-10">
-                            <Button type="button" label="Reset" icon="pi pi-refresh" class="p-button-secondary w-1/4"
+                        <div class="mt-10 flex flex-col justify-center gap-3 sm:flex-row sm:gap-4">
+                            <Button type="button" label="Reset" icon="pi pi-refresh" class="p-button-secondary w-full sm:w-1/4"
                                 @click="resetForm" />
 
                             <Button type="submit" :label="isEditMode ? 'Update Customer' : 'Save Customer'"
-                                icon="pi pi-check" class="p-button-success w-1/3" />
+                                icon="pi pi-check" class="p-button-success w-full sm:w-1/3" />
                         </div>
 
                     </form>
@@ -2216,5 +2225,43 @@ const formatHistoryValue = (key: string, value: any) => {
 .fade-leave-to {
     opacity: 0;
     transform: translateY(-5px);
+}
+
+.contact-form-label {
+    display: block;
+    margin-bottom: 0.35rem;
+    font-weight: 600;
+    color: rgb(51 65 85);
+}
+
+.contact-form-input :is(input, textarea),
+.contact-form-input.p-inputtext,
+.contact-form-input.p-inputtextarea {
+    border-color: rgb(203 213 225);
+    background: rgba(255, 255, 255, 0.95);
+}
+
+@media (max-width: 767px) {
+    .contact-form-shell {
+        border-color: rgba(255, 255, 255, 0.45);
+        background:
+            radial-gradient(circle at top right, rgba(186, 230, 253, 0.85), transparent 28%),
+            linear-gradient(180deg, rgba(248, 250, 252, 0.98), rgba(255, 255, 255, 0.96));
+        box-shadow:
+            0 24px 60px -34px rgba(14, 165, 233, 0.55),
+            0 10px 25px -18px rgba(16, 185, 129, 0.4);
+    }
+
+    .contact-form-section {
+        border: 1px solid rgba(186, 230, 253, 0.85);
+        border-radius: 1.25rem;
+        padding: 0.95rem;
+        background: rgba(255, 255, 255, 0.84);
+        box-shadow: 0 12px 28px -24px rgba(14, 165, 233, 0.6);
+    }
+
+    .contact-form-label {
+        color: rgb(15 23 42);
+    }
 }
 </style>

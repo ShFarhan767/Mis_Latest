@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from "vue";
 import AppLayout from "@/layouts/AppLayout.vue";
 import DataTable from "@/Components/DataTable.vue";
-import { Head } from "@inertiajs/vue3";
+import { Head, Link } from "@inertiajs/vue3";
 import axios from "axios";
 import Toast from "primevue/toast";
 import { useToast } from "primevue/usetoast";
@@ -1844,6 +1844,18 @@ const staffAllVisibleTasks = computed(() => {
         <template v-else>
             <Toast />
 
+            <div v-if="props.userRole === 'staff'" class="px-4 pt-4 md:hidden">
+                <Link
+                    href="/contact-entry"
+                    class="flex items-center justify-between rounded-2xl bg-gradient-to-r from-emerald-500 via-sky-500 to-cyan-500 px-4 py-3 text-white shadow-lg shadow-cyan-500/20"
+                >
+                    <div>
+                        <p class="text-sm font-bold">Add New Contact Entry</p>
+                    </div>
+                    <i class="pi pi-plus-circle text-2xl"></i>
+                </Link>
+            </div>
+
             <!-- 🔥 SEARCH RESULT AREA -->
             <div v-if="!showDashboard" class="p-4 space-y-6">
 
@@ -2095,7 +2107,7 @@ const staffAllVisibleTasks = computed(() => {
                         class="xl:col-span-4 flex flex-col">
                         <label class="text-sm font-medium mb-1">Search Employee</label>
 
-                        <Multiselect v-model="selectedEmployee" :options="employeeOptions" label="name" track-by="id"
+                        <Multiselect v-model="selectedEmployee" :options="employeeOptions" label="name" :show-labels="false" track-by="id"
                             placeholder="Filter by Assigned User" class="h-[44px] rounded-xl border border-green-300" />
                     </div>
 
@@ -2103,7 +2115,7 @@ const staffAllVisibleTasks = computed(() => {
                     <div class="xl:col-span-4 flex flex-col">
                         <label class="text-sm font-medium mb-1">Search by Shop</label>
 
-                        <Multiselect v-model="selectedShop" :options="shopOptionsByTab" label="shop_name" track-by="id"
+                        <Multiselect v-model="selectedShop" :options="shopOptionsByTab" label="shop_name" :show-labels="false" track-by="id"
                             placeholder="Filter by Shop Name" class="h-[44px] rounded-xl border border-blue-300" />
                     </div>
 
@@ -2118,6 +2130,7 @@ const staffAllVisibleTasks = computed(() => {
                             placeholder="Select Status"
                             class="h-[44px] rounded-xl border border-purple-300"
                             label="label"
+                            :show-labels="false"
                             track-by="value"
                             />
                     </div>
@@ -4416,7 +4429,7 @@ const staffAllVisibleTasks = computed(() => {
                     <!-- Employee Dropdown -->
                     <div>
                         <label class="font-semibold block mb-2">Employee</label>
-                        <Multiselect v-model="assignedEmployee" :options="employeeOptions" label="name" track-by="id"
+                        <Multiselect v-model="assignedEmployee" :options="employeeOptions" label="name" :show-labels="false" track-by="id"
                             placeholder="Select Employee" :loading="loadingEmployees">
                             <!-- Custom template for showing name, designation, and mobile -->
                             <template #option="{ option }">

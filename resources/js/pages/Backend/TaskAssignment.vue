@@ -204,7 +204,7 @@ const tableRows = computed(() =>
                             <!-- Employee -->
                             <div>
                                 <label class="font-semibold block mb-2">Employee</label>
-                                <Multiselect v-model="form.employee" :options="employees" label="name" track-by="id"
+                                <Multiselect v-model="form.employee" :options="employees" label="name" :show-labels="false" track-by="id"
                                     placeholder="Select employee" />
                             </div>
 

@@ -197,7 +197,7 @@ const formatDate = (dateStr: string) => {
                     <div>
                         <label class="block text-gray-700 text-sm mb-2">Search by Employee</label>
                         <Multiselect v-model="selectedEmployees" :options="allUsers" label="name" track-by="id"
-                            placeholder="Select employees" multiple class="w-full" />
+                           :show-labels="false" placeholder="Select employees" multiple class="w-full" />
                     </div>
 
                     <!-- Status -->

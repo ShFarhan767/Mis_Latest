@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch, nextTick } from "vue";
+import { ref, computed, onMounted, watch } from "vue";
 import axios from "axios";
 import Toast from "primevue/toast";
 import { useToast } from "primevue/usetoast";
 import Dialog from "primevue/dialog";
 import Calendar from "primevue/calendar";
+import DemoNotesDialog from "@/components/demo/DemoNotesDialog.vue";
 
 const toast = useToast();
 
@@ -13,7 +14,8 @@ const customers = ref<any[]>([]);
 
 const activeTab = ref<"All" | "Pending" | "Done" | "Cancelled">("All");
 const searchQuery = ref("");
-const filterAssignedMonth = ref<Date | null>(null);
+// Default month filter to the running month
+const filterAssignedMonth = ref<Date | null>(new Date());
 
 // Status update modal
 const showStatusDialog = ref(false);
@@ -29,48 +31,6 @@ const detailsTab = ref<"info" | "history">("info");
 // Notes modal (chat)
 const showNotesDialog = ref(false);
 const notesCustomer = ref<any | null>(null);
-const notesScrollEl = ref<HTMLElement | null>(null);
-const notesPollTimer = ref<ReturnType<typeof setInterval> | null>(null);
-const lastSeenNoteId = ref<number>(0);
-const audioCtx = ref<AudioContext | null>(null);
-
-const ensureAudioUnlocked = async () => {
-    try {
-        if (!audioCtx.value) {
-            const Ctx = (window as any).AudioContext || (window as any).webkitAudioContext;
-            if (!Ctx) return;
-            audioCtx.value = new Ctx();
-        }
-        if (audioCtx.value?.state === "suspended") await audioCtx.value.resume();
-    } catch {
-        // ignore autoplay restrictions
-    }
-};
-
-const playNotifySound = async () => {
-    await ensureAudioUnlocked();
-    const ctx = audioCtx.value;
-    if (!ctx) return;
-
-    const oscillator = ctx.createOscillator();
-    const gain = ctx.createGain();
-    oscillator.type = "sine";
-    oscillator.frequency.value = 880;
-    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.12, ctx.currentTime + 0.01);
-    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.18);
-    oscillator.connect(gain);
-    gain.connect(ctx.destination);
-    oscillator.start();
-    oscillator.stop(ctx.currentTime + 0.2);
-};
-
-const stopNotesPolling = () => {
-    if (notesPollTimer.value) {
-        clearInterval(notesPollTimer.value);
-        notesPollTimer.value = null;
-    }
-};
 
 // History timeline
 const historyLoading = ref(false);
@@ -80,24 +40,7 @@ const assignedForDemoBy = ref<string | null>(null);
 const demoAssignedAtMap = ref<Record<number, string | null>>({});
 const demoAssignedByMap = ref<Record<number, string | null>>({});
 
-// Demo notes (chat)
-const notes = ref<any[]>([]);
-const notesLoading = ref(false);
-const sending = ref(false);
-const message = ref("");
-const currentUser = ref<any | null>(null);
-
 const isHtml = (value: any) => typeof value === "string" && value.includes("<");
-
-const fetchCurrentUser = async () => {
-    if (currentUser.value) return;
-    try {
-        const { data } = await axios.get("/api/current-user");
-        currentUser.value = data;
-    } catch {
-        currentUser.value = null;
-    }
-};
 
 const fetchDemoCustomers = async () => {
     loading.value = true;
@@ -320,6 +263,12 @@ const filteredRows = computed(() => {
     return searchFilteredRows.value.filter((r: any) => r.demo_status === activeTab.value);
 });
 
+const showFilteredCount = computed(() => {
+    return !!(searchQuery.value.trim() || filterAssignedMonth.value);
+});
+
+const filteredCount = computed(() => filteredRows.value.length);
+
 const openStatus = (row: any) => {
     if (isLocked(row)) {
         const status = row?.demo_status ?? "Assigned";
@@ -389,120 +338,39 @@ const fetchHistory = async (customerId: number) => {
     }
 };
 
-const fetchNotes = async (
-    customerId: number,
-    opts?: { playSound?: boolean; silent?: boolean; markRead?: boolean }
-) => {
-    const silent = opts?.silent ?? false;
-    const markRead = opts?.markRead ?? true;
-    if (!silent) notesLoading.value = true;
-    try {
-        const prevMaxId = lastSeenNoteId.value || 0;
-        const { data } = await axios.get(`/api/customers/${customerId}/demo-notes`);
-        const incoming = Array.isArray(data?.notes) ? data.notes : [];
-        notes.value = incoming;
-        if (markRead) {
-            try {
-                await axios.put(`/api/customers/${customerId}/demo-notes/mark-read`);
-            } catch {
-                // Don't block chat rendering if mark-read fails.
-            }
-        }
-
-        const idx = customers.value.findIndex((c: any) => c.id === customerId);
-        if (idx !== -1) customers.value[idx].demo_notes_unread = 0;
-        if (detailsCustomer.value?.id === customerId) detailsCustomer.value.demo_notes_unread = 0;
-        if (notesCustomer.value?.id === customerId) notesCustomer.value.demo_notes_unread = 0;
-
-        const maxId = incoming.reduce((m: number, n: any) => Math.max(m, Number(n?.id || 0)), 0);
-        const hasNewFromOther =
-            (opts?.playSound ?? false) &&
-            maxId > prevMaxId &&
-            incoming.some((n: any) => Number(n?.id || 0) > prevMaxId && n?.user_id !== currentUser.value?.id);
-
-        lastSeenNoteId.value = Math.max(prevMaxId, maxId);
-        if (hasNewFromOther) void playNotifySound();
-
-        await nextTick();
-        if (notesScrollEl.value) notesScrollEl.value.scrollTop = notesScrollEl.value.scrollHeight;
-    } catch (error: any) {
-        if (silent) return;
-
-        if (error?.response?.status === 403) {
-            toast.add({
-                severity: "error",
-                summary: "Forbidden",
-                detail: "You don't have permission to view these demo notes.",
-                life: 3000,
-            });
-            return;
-        }
-
-        toast.add({
-            severity: "error",
-            summary: "Error",
-            detail: error?.response?.data?.message || "Failed to load demo notes.",
-            life: 3000,
-        });
-        notes.value = [];
-    } finally {
-        if (!silent) notesLoading.value = false;
-    }
-};
-
-const isMine = (note: any) => currentUser.value?.id && note?.user_id === currentUser.value.id;
-
-const send = async () => {
-    if (!notesCustomer.value?.id) return;
-    const customerId = notesCustomer.value.id;
-    const text = message.value.trim();
-    if (!text) return;
-
-    sending.value = true;
-    try {
-        const { data } = await axios.post(`/api/customers/${customerId}/demo-notes`, { message: text });
-        if (data?.note) notes.value.push(data.note);
-        message.value = "";
-        await axios.put(`/api/customers/${customerId}/demo-notes/mark-read`);
-        lastSeenNoteId.value = Math.max(lastSeenNoteId.value || 0, Number(data?.note?.id || 0));
-        await nextTick();
-        if (notesScrollEl.value) notesScrollEl.value.scrollTop = notesScrollEl.value.scrollHeight;
-    } catch (error: any) {
-        toast.add({
-            severity: "error",
-            summary: "Error",
-            detail: error?.response?.data?.message || "Failed to send message.",
-            life: 3000,
-        });
-    } finally {
-        sending.value = false;
-    }
-};
-
 const openDetails = async (row: any, tab: "info" | "history" = "info") => {
     detailsCustomer.value = row;
     detailsTab.value = tab;
     showDetailsDialog.value = true;
     historyData.value = [];
-    await fetchCurrentUser();
     await fetchHistory(row.id);
 };
 
-const openNotes = async (row: any) => {
+const openNotes = (row: any) => {
     notesCustomer.value = row;
     showNotesDialog.value = true;
-    message.value = "";
-    notes.value = [];
-    lastSeenNoteId.value = 0;
-    await fetchCurrentUser();
-    await fetchNotes(row.id, { playSound: false, silent: false, markRead: true });
-    await ensureAudioUnlocked();
+};
 
-    stopNotesPolling();
-    notesPollTimer.value = setInterval(() => {
-        if (!notesCustomer.value?.id) return;
-        void fetchNotes(notesCustomer.value.id, { playSound: true, silent: true, markRead: false });
-    }, 3000);
+const getDemoNotesUnread = (customerId: number | null) => {
+    if (!customerId) return 0;
+    const customer = customers.value.find((item: any) => item.id === customerId);
+    return Number(customer?.demo_notes_unread ?? 0);
+};
+
+const handleNotesMarkedRead = ({ customerId }: { customerId: number | null }) => {
+    if (!customerId) return;
+    const customer = customers.value.find((item: any) => item.id === customerId);
+    if (customer) {
+        customer.demo_notes_unread = 0;
+    }
+};
+
+const handleNotesVisibilityChange = (visible: boolean) => {
+    showNotesDialog.value = visible;
+    if (!visible) {
+        notesCustomer.value = null;
+        void fetchDemoCustomers();
+    }
 };
 
 watch(
@@ -522,12 +390,8 @@ watch(
     () => showNotesDialog.value,
     (v) => {
         if (!v) {
-            stopNotesPolling();
             notesCustomer.value = null;
-            message.value = "";
-            notes.value = [];
-            notesLoading.value = false;
-            sending.value = false;
+            void fetchDemoCustomers();
         }
     }
 );
@@ -616,7 +480,7 @@ const getAssignedForDemoBy = (customerId: number) => demoAssignedByMap.value[cus
         <Toast />
 
         <!-- Header -->
-        <div class="relative overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+        <div class="relative overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm lg:block hidden">
             <div
                 class="absolute -top-24 -right-24 h-72 w-72 rounded-full bg-gradient-to-br from-indigo-200/60 to-sky-200/60 blur-3xl"
             />
@@ -720,12 +584,13 @@ const getAssignedForDemoBy = (customerId: number) => demoAssignedByMap.value[cus
             </div>
         </div>
 
-        <div class="rounded-3xl border border-slate-200 bg-white shadow-sm px-5 py-3 text-sm text-slate-700 flex flex-wrap items-center gap-x-4 gap-y-2">
-            <span class="font-semibold text-slate-900">Counts:</span>
-            <span>Assigned: <span class="font-semibold">{{ total }}</span></span>
-            <span>Pending: <span class="font-semibold">{{ pendingCount }}</span></span>
-            <span>Done: <span class="font-semibold">{{ doneCount }}</span></span>
-            <span>Cancelled: <span class="font-semibold">{{ cancelledCount }}</span></span>
+        <div class="flex justify-center items-center gap-2">
+            <span
+                v-if="showFilteredCount"
+                class="inline-block bg-indigo-600 text-white text-base font-semibold px-5 py-2 rounded-2xl shadow-sm"
+            >
+                Total Found - ({{ filteredCount }})
+            </span>
         </div>
 
         <!-- Cards (2 in one line on lg) -->
@@ -995,7 +860,7 @@ const getAssignedForDemoBy = (customerId: number) => demoAssignedByMap.value[cus
                     <p class="text-xs text-slate-500 mt-1">Shows what was changed and by whom.</p>
                 </div>
 
-                <div class="max-h-[28rem] overflow-y-auto rounded-3xl border border-slate-200 bg-white p-5">
+                <div class="max-h-[28rem] overflow-y-auto rounded-3xl border border-slate-200 bg-white p-3 sm:p-5">
                     <div v-if="historyLoading" class="text-sm text-slate-500 text-center py-10">Loading history...</div>
 
                     <div v-else-if="historyData.length === 0" class="text-sm text-slate-500 text-center py-10">
@@ -1003,24 +868,24 @@ const getAssignedForDemoBy = (customerId: number) => demoAssignedByMap.value[cus
                     </div>
 
                     <div v-else class="relative">
-                        <div class="absolute left-1.5 top-2 bottom-0 w-1 bg-gray-200 rounded-full"></div>
+                        <div class="absolute left-1.5 top-2 bottom-0 w-1 rounded-full bg-gray-200"></div>
 
                         <template v-for="(item, idx) in historyData" :key="item.id">
-                            <div class="relative flex items-start gap-8 group">
-                                <div class="flex flex-col items-center z-10">
-                                    <div class="w-4 h-4 rounded-full shadow relative top-2"
+                            <div class="group relative flex items-start gap-3 sm:gap-8">
+                                <div class="z-10 flex flex-col items-center self-stretch">
+                                    <div class="relative top-2 h-4 w-4 rounded-full shadow"
                                         :class="item.note === 'Customer created' ? 'bg-green-500' : 'bg-indigo-600'"></div>
-                                    <div v-if="idx !== historyData.length - 1" class="flex-1 w-1 bg-gray-200"></div>
+                                    <div v-if="idx !== historyData.length - 1" class="w-1 flex-1 bg-gray-200"></div>
                                 </div>
 
-                                <div class="flex-1 bg-white p-5 rounded-xl shadow border-l-4 relative -top-1 mb-5"
+                                <div class="relative mb-5 flex-1 rounded-xl border-l-4 bg-white p-3 shadow sm:-top-1 sm:p-5"
                                     :class="item.note === 'Customer created' ? 'border-green-500' : 'border-indigo-600'">
-                                    <div class="flex justify-between items-center mb-3">
+                                    <div class="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                                         <div class="flex items-center gap-2 text-sm">
                                             <i class="pi pi-user text-indigo-600" />
                                             <span class="font-semibold text-indigo-700">{{ item.staff || "-" }}</span>
                                         </div>
-                                        <span class="text-indigo-600 text-sm font-medium">
+                                        <span class="text-sm font-medium text-indigo-600 break-words">
                                             Change Time: {{ formatDateTime(item.created_at) }}
                                         </span>
                                     </div>
@@ -1030,15 +895,15 @@ const getAssignedForDemoBy = (customerId: number) => demoAssignedByMap.value[cus
                                     </div>
 
                                     <div v-if="historyEntries(item.old_data).length"
-                                        class="bg-gray-50 p-4 rounded-lg border border-gray-200">
+                                        class="rounded-lg border border-gray-200 bg-gray-50 p-3 sm:p-4">
                                         <strong class="text-indigo-700"><i class="pi pi-pencil mr-2" />Changed Fields:</strong>
-                                        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3 text-sm text-gray-700">
-                                            <div v-for="([key, value]) in historyEntries(item.old_data)" :key="key" class="flex gap-2">
-                                                <span class="font-medium capitalize min-w-28">
+                                        <div class="mt-3 grid grid-cols-1 gap-2 text-sm text-gray-700 sm:grid-cols-2 sm:gap-3">
+                                            <div v-for="([key, value]) in historyEntries(item.old_data)" :key="key" class="flex flex-col gap-1 break-words sm:flex-row sm:gap-2">
+                                                <span class="font-medium capitalize sm:min-w-28">
                                                     {{ String(key).replace(/_/g, ' ') }}:
                                                 </span>
-                                                <span v-if="isHtml(value)" v-html="value" class="prose prose-sm max-w-none" />
-                                                <span v-else class="text-gray-700">{{ formatHistoryValue(value) }}</span>
+                                                <span v-if="isHtml(value)" v-html="value" class="prose prose-sm max-w-none min-w-0 break-words" />
+                                                <span v-else class="min-w-0 break-words text-gray-700">{{ formatHistoryValue(value) }}</span>
                                             </div>
                                         </div>
                                     </div>
@@ -1050,105 +915,20 @@ const getAssignedForDemoBy = (customerId: number) => demoAssignedByMap.value[cus
             </div>
 
             <template #footer>
-                <button class="px-5 py-2 bg-slate-900 text-white rounded-2xl hover:bg-slate-800 transition" @click="showDetailsDialog = false">
+                <button class="w-full rounded-2xl bg-slate-900 px-5 py-2 text-white transition hover:bg-slate-800 sm:w-auto" @click="showDetailsDialog = false">
                     Close
                 </button>
             </template>
         </Dialog>
 
-        <!-- Notes Modal -->
-        <Dialog
-            v-model:visible="showNotesDialog"
-            modal
-            :style="{ width: '50rem', maxWidth: '95vw', height: 'auto' }"
-            :header="notesCustomer?.name ? `Notes — ${notesCustomer.name}` : 'Notes'"
-        >
-            <div class="space-y-4">
-                <!-- Chat -->
-                <div class="rounded-3xl border border-slate-200 bg-white overflow-hidden">
-                    <div class="border-b border-slate-100 px-5 py-3 flex items-center justify-between">
-                        <div class="text-sm font-semibold text-slate-900">
-                            <i class="pi pi-comments mr-2" />Chat
-                        </div>
-                        <div class="text-xs text-slate-500">Enter to send · Shift+Enter for new line</div>
-                    </div>
-
-                    <div class="bg-gradient-to-b from-slate-50 to-white px-4 py-4">
-                        <div ref="notesScrollEl" class="h-[26rem] overflow-y-auto pr-2">
-                            <div v-if="notesLoading" class="text-sm text-slate-500 text-center py-14">Loading...</div>
-
-                            <div v-else-if="notes.length === 0" class="text-sm text-slate-500 text-center py-14">
-                                No messages yet.
-                            </div>
-
-                            <div v-else class="space-y-3">
-                                <div
-                                    v-for="n in notes"
-                                    :key="n.id"
-                                    class="flex items-end gap-2"
-                                    :class="isMine(n) ? 'justify-end' : 'justify-start'"
-                                >
-                                    <div v-if="!isMine(n)" class="h-9 w-9 shrink-0 rounded-2xl bg-white border border-slate-200 flex items-center justify-center text-slate-700 font-semibold">
-                                        {{ initials(n.user?.name || 'U') }}
-                                    </div>
-
-                                    <div
-                                        class="max-w-[78%] rounded-3xl px-4 py-3 shadow-sm border"
-                                        :class="isMine(n) ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-800 border-slate-200'"
-                                    >
-                                        <div class="mb-1 flex items-center justify-between gap-4 text-[11px] opacity-90">
-                                            <span class="font-semibold truncate">
-                                                {{ isMine(n) ? 'You' : (n.user?.name || 'User') }}
-                                                <span class="font-normal opacity-80" v-if="n.user?.role">({{ n.user.role }})</span>
-                                            </span>
-                                            <span class="shrink-0 opacity-80">{{ formatTime(n.created_at) }}</span>
-                                        </div>
-                                        <div class="text-sm whitespace-pre-line leading-relaxed">{{ n.message }}</div>
-                                    </div>
-
-                                    <div v-if="isMine(n)" class="h-9 w-9 shrink-0 rounded-2xl bg-slate-900 text-white flex items-center justify-center font-semibold">
-                                        {{ initials(currentUser?.name || 'Y') }}
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Composer -->
-                    <div class="border-t border-slate-100 bg-white px-4 py-4">
-                        <div class="flex gap-2">
-                            <div class="flex-1 rounded-3xl border border-slate-200 bg-white shadow-sm focus-within:ring-2 focus-within:ring-purple-300">
-                                <textarea
-                                    v-model="message"
-                                    rows="2"
-                                    class="w-full resize-none rounded-3xl bg-transparent px-4 py-3 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none"
-                                    placeholder="Write a message..."
-                                    @keydown.enter.exact.prevent="send"
-                                />
-                            </div>
-                            <button
-                                class="inline-flex items-center justify-center rounded-3xl bg-purple-600 px-5 py-3 text-sm font-semibold text-white shadow-sm hover:bg-purple-700 transition disabled:opacity-60 disabled:cursor-not-allowed"
-                                :disabled="sending || !message.trim()"
-                                type="button"
-                                @click="send"
-                            >
-                                <i class="pi pi-send mr-2" />
-                                {{ sending ? "Sending..." : "Send" }}
-                            </button>
-                            <button class="px-5 py-2 bg-slate-900 text-white rounded-2xl hover:bg-slate-800 transition" @click="showNotesDialog = false">
-                                Close
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- <template #footer>
-                <button class="px-5 py-2 bg-slate-900 text-white rounded-2xl hover:bg-slate-800 transition" @click="showNotesDialog = false">
-                    Close
-                </button>
-            </template> -->
-        </Dialog>
+        <DemoNotesDialog
+            :visible="showNotesDialog"
+            :customerId="notesCustomer?.id ?? null"
+            :customerName="notesCustomer?.name ?? ''"
+            :unreadCount="getDemoNotesUnread(notesCustomer?.id ?? null)"
+            @marked-read="handleNotesMarkedRead"
+            @update:visible="handleNotesVisibilityChange"
+        />
 
         <!-- Update Status Modal -->
         <Dialog v-model:visible="showStatusDialog" header="Update Demo Status" modal :style="{ width: '32rem', maxWidth: '95vw' }">

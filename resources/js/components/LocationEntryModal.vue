@@ -218,7 +218,7 @@ watch(visibleModel, (val) => {
             <!-- Form -->
             <div class="space-y-4 w-80 mx-auto border-b pb-4">
                 <div>
-                    <Multiselect v-model="selectedCountry" :options="countryOptions" label="name" track-by="name"
+                    <Multiselect v-model="selectedCountry" :show-labels="false" :options="countryOptions" label="name" track-by="name"
                         placeholder="Select Country" />
                 </div>
 

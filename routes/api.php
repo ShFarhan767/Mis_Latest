@@ -146,6 +146,7 @@ Route::prefix('/api')->group(function () {
     Route::middleware('auth:sanctum')->group(function() {
         Route::get('/customers/{customer}/history', [CustomerHistoryController::class, 'getHistory']);
         Route::get('/customers/{customer}/notes', [CustomerHistoryController::class, 'getNotes']);
+        Route::put('/customers/{customer}/notes/mark-read', [CustomerHistoryController::class, 'markRead']);
         Route::put('/customer-history/{id}/update-note', [CustomerHistoryController::class, 'updateNote']);
         Route::post('/customers/{customer}/add-note', [CustomerHistoryController::class, 'addNote']);
 

@@ -188,7 +188,7 @@ const tableRows = computed(() =>
                         <!-- STAFF SELECT -->
                         <div class="w-full md:w-1/3">
                             <label class="font-semibold block mb-2 text-gray-700">Select Staff</label>
-                            <Multiselect v-model="selectedStaff" :options="staffList" label="name" track-by="id"
+                            <Multiselect v-model="selectedStaff" :options="staffList" label="name" :show-labels="false" track-by="id"
                                 placeholder="Choose staff" :searchable="true" :allow-empty="true" />
                         </div>
 
