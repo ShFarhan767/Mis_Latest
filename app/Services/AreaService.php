@@ -15,21 +15,28 @@ class AreaService
 
     public function getAll()
     {
-        return $this->repo->all();
+        // Use CacheService for faster retrieval
+        return CacheService::getAreas();
     }
 
     public function store(array $data, $userId)
     {
-        return $this->repo->store($data, $userId);
+        $result = $this->repo->store($data, $userId);
+        CacheService::invalidateAreas(); // Clear cache on create
+        return $result;
     }
 
     public function update($id, $data)
     {
-        return $this->repo->update($id, $data);
+        $result = $this->repo->update($id, $data);
+        CacheService::invalidateAreas(); // Clear cache on update
+        return $result;
     }
 
     public function delete($id)
     {
-        return $this->repo->delete($id);
+        $result = $this->repo->delete($id);
+        CacheService::invalidateAreas(); // Clear cache on delete
+        return $result;
     }
 }

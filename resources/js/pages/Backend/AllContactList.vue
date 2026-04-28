@@ -631,11 +631,6 @@ const getDemoNotesTab = (customer: any) => {
     return "Need To Show Demo";
 };
 
-const getDemoNotesTabLabel = (customer: any) => {
-    const tab = getDemoNotesTab(customer);
-    return tab === "Cancelled" ? "Demo Cancelled" : tab;
-};
-
 const clearDemoNotesUnreadLocally = (customerId: number | null) => {
     if (!customerId) return;
     const customer = customers.value.find((item: any) => item.id === customerId);
@@ -660,12 +655,6 @@ const openDemoNotes = (customer: any) => {
     showDemoNotes.value = true;
 };
 
-const openDemoNotesFromNotification = (customer: any) => {
-    if (!customer) return;
-    activeTab.value = getDemoNotesTab(customer);
-    openDemoNotes(customer);
-};
-
 const handleDemoNotesMarkedRead = ({ customerId }: { customerId: number | null }) => {
     clearDemoNotesUnreadLocally(customerId);
 };
@@ -676,6 +665,50 @@ const handleDemoNotesVisibilityChange = (visible: boolean) => {
         demoNotesCustomer.value = null;
         void refreshUnreadCounts();
     }
+};
+
+const openDemoNotesFromPayload = (customerId: number, demoTabKey?: string | null) => {
+    const customer = customers.value.find((item: any) => item.id === customerId);
+    if (!customer) return;
+
+    if (demoTabKey === 'pending') {
+        activeTab.value = 'Demo Pending';
+    } else if (demoTabKey === 'done') {
+        activeTab.value = 'Demo Done';
+    } else if (demoTabKey === 'cancelled') {
+        activeTab.value = 'Cancelled';
+    } else {
+        activeTab.value = getDemoNotesTab(customer);
+    }
+
+    openDemoNotes(customer);
+};
+
+const handleDemoNotificationEvent = (event: Event) => {
+    const detail = (event as CustomEvent)?.detail ?? {};
+    const customerId = Number(detail.customerId || 0);
+    if (!customerId) return;
+    openDemoNotesFromPayload(customerId, typeof detail.demoTabKey === 'string' ? detail.demoTabKey : null);
+};
+
+const applyDemoNotificationNavigation = () => {
+    if (currentUser.value?.role === 'demo_presenter') return;
+
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('openDemoNotes') !== '1') return;
+
+    const customerId = Number(params.get('demoNoteCustomer') || 0);
+    const demoTabKey = (params.get('demoNoteTab') || '').toLowerCase();
+    if (!customerId) return;
+
+    openDemoNotesFromPayload(customerId, demoTabKey);
+
+    params.delete('openDemoNotes');
+    params.delete('demoNoteCustomer');
+    params.delete('demoNoteTab');
+    const nextQuery = params.toString();
+    const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ''}`;
+    window.history.replaceState({}, '', nextUrl);
 };
 
 watch(selectedStaffStatus, (val) => {
@@ -1031,25 +1064,6 @@ const showFilteredCount = computed(() => {
 
 const filteredCount = computed(() => filteredCustomers.value.length);
 
-const demoNoteNotifications = computed(() =>
-    customers.value
-        .filter((customer: any) => Number(customer?.demo_notes_unread ?? 0) > 0)
-        .map((customer: any) => ({
-            ...customer,
-            unreadCount: Number(customer.demo_notes_unread ?? 0),
-            notificationTab: getDemoNotesTab(customer),
-            notificationTabLabel: getDemoNotesTabLabel(customer),
-        }))
-        .sort((left: any, right: any) => {
-            if (right.unreadCount !== left.unreadCount) {
-                return right.unreadCount - left.unreadCount;
-            }
-
-            return new Date(right.updated_at ?? right.created_at ?? 0).getTime()
-                - new Date(left.updated_at ?? left.created_at ?? 0).getTime();
-        })
-);
-
 const clearFilters = () => {
     filterCreatedBy.value = null;
     filterCreatedDate.value = null;
@@ -1241,7 +1255,9 @@ onMounted(async () => {
     await fetchDemoPresenters();
     await fetchCurrentUser();
     await fetchServiceTypes(); // 👈 add this
-    fetchNewCustomers();
+    await fetchNewCustomers();
+    window.addEventListener('open-demo-note-notification', handleDemoNotificationEvent as EventListener);
+    applyDemoNotificationNavigation();
 
     unreadRefreshTimer.value = setInterval(() => {
         void refreshUnreadCounts();
@@ -1249,6 +1265,7 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+    window.removeEventListener('open-demo-note-notification', handleDemoNotificationEvent as EventListener);
     if (unreadRefreshTimer.value) {
         clearInterval(unreadRefreshTimer.value);
         unreadRefreshTimer.value = null;
@@ -1300,65 +1317,6 @@ const getDemoAssignedAt = (customerId: number) => demoAssignedAtMap.value[custom
                 <p class="mt-1 text-gray-600 text-sm">
                     Showing all customers lists.
                 </p>
-            </div>
-
-            <div
-                v-if="demoNoteNotifications.length"
-                class="sticky top-2 z-20 mb-5 rounded-2xl border border-red-200 bg-white p-4 shadow-sm"
-            >
-                <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                    <div>
-                        <div class="flex flex-wrap items-center gap-2">
-                            <span class="inline-flex h-9 w-9 items-center justify-center rounded-full bg-red-100 text-red-600">
-                                <i class="pi pi-bell text-sm"></i>
-                            </span>
-                            <div>
-                                <h2 class="text-base font-semibold text-gray-900">Unread Demo Note Messages</h2>
-                                <p class="text-sm text-gray-600">
-                                    {{ demoNoteNotifications.length }} customer{{ demoNoteNotifications.length > 1 ? 's have' : ' has' }} unread demo-note chat messages.
-                                </p>
-                            </div>
-                        </div>
-                    </div>
-
-                    <button
-                        type="button"
-                        class="inline-flex items-center justify-center rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-700"
-                        @click="openDemoNotesFromNotification(demoNoteNotifications[0])"
-                    >
-                        <i class="pi pi-comments mr-2"></i>
-                        Open Top Unread
-                    </button>
-                </div>
-
-                <div class="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                    <button
-                        v-for="customer in demoNoteNotifications"
-                        :key="customer.id"
-                        type="button"
-                        class="flex w-full items-start justify-between gap-3 rounded-2xl border border-red-100 bg-red-50/70 p-4 text-left transition hover:border-red-300 hover:bg-red-50"
-                        @click="openDemoNotesFromNotification(customer)"
-                    >
-                        <div class="min-w-0">
-                            <div class="flex flex-wrap items-center gap-2">
-                                <span class="font-semibold text-gray-900 break-words">{{ customer.name || 'Customer' }}</span>
-                                <span class="inline-flex items-center rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-red-700">
-                                    {{ customer.notificationTabLabel }}
-                                </span>
-                            </div>
-                            <p class="mt-1 text-sm text-gray-600">
-                                Customer ID: {{ customer.id }}
-                            </p>
-                            <p class="mt-1 text-sm text-gray-700">
-                                Click to open this customer's demo note chat.
-                            </p>
-                        </div>
-
-                        <span class="inline-flex min-w-8 items-center justify-center rounded-full bg-red-600 px-2 py-1 text-xs font-semibold text-white">
-                            {{ customer.unreadCount }}
-                        </span>
-                    </button>
-                </div>
             </div>
 
             <div class="flex justify-between items-center mb-4">

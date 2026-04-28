@@ -21,7 +21,6 @@ import Checkbox from "primevue/checkbox";
 import Calendar from "primevue/calendar";
 import Dropdown from "primevue/dropdown";
 import Dialog from "primevue/dialog";
-import Editor from "primevue/editor";
 import Multiselect from "vue-multiselect";
 
 const props = defineProps({
@@ -214,6 +213,7 @@ const searching = ref(false);
 
 const isEditMode = ref(false);
 const editingCustomerId = ref<number | null>(null);
+const isSubmitting = ref(false);
 
 // 🔹 Debounce timer
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -969,6 +969,8 @@ const editCustomer = (cust: any) => {
 };
 
 const submitForm = async () => {
+    if (isSubmitting.value) return;
+
     // 1️⃣ BASIC VALIDATION
     if (!customer.value.name) {
         toast.add({ severity: "warn", summary: "Warning", detail: "Name is required", life: 3000 });
@@ -1056,6 +1058,7 @@ const submitForm = async () => {
     };
 
     // 3️⃣ SEND API REQUEST
+    isSubmitting.value = true;
     try {
         if (isEditMode.value && editingCustomerId.value) {
             await axios.put(`/api/customers/${editingCustomerId.value}`, payload);
@@ -1088,6 +1091,8 @@ const submitForm = async () => {
             detail: error.response?.data?.message || "Operation failed",
             life: 5000
         });
+    } finally {
+        isSubmitting.value = false;
     }
 };
 
@@ -1834,15 +1839,15 @@ const formatHistoryValue = (key: string, value: any) => {
                         </div>
 
                         <!-- 12️⃣ CLIENT BEHAVIOUR -->
-                        <div class="contact-form-section mb-16">
+                        <div class="contact-form-section mb-5">
                             <label class="contact-form-label">Client Behaviour & Sound <span
                                     class="text-red-600">*</span></label>
-                            <Editor v-model="customer.client_behaviour" :key="editingCustomerId"
-                                style="height: 140px;" />
+                            <Textarea v-model="customer.client_behaviour" rows="4" :key="editingCustomerId"
+                                class="contact-form-input w-full rounded-xl border p-2.5" />
                         </div>
 
                         <!-- 🔟 OUR COMMITMENT -->
-                        <div class="contact-form-section mt-5">
+                        <div class="contact-form-section lg:mt-5">
                             <label class="contact-form-label">Our Commitment <span
                                     class="text-red-600">*</span></label>
                             <Textarea v-model="customer.our_commitment" rows="3" class="contact-form-input w-full rounded-xl border p-2.5" />
@@ -1856,14 +1861,14 @@ const formatHistoryValue = (key: string, value: any) => {
                         </div>
 
                         <!-- 9️⃣ FEATURE NEED -->
-                        <div class="contact-form-section mb-10">
+                        <div class="contact-form-section mb-5">
                             <label class="contact-form-label">Feature Need</label>
-                            <Editor v-model="customer.feature_need" :key="'feature-' + editingCustomerId"
-                                style="height: 150px;" />
+                            <Textarea v-model="customer.feature_need" rows="4" :key="'feature-' + editingCustomerId"
+                                class="contact-form-input w-full rounded-xl border p-2.5" />
                         </div>
 
                         <!-- 11️⃣ OFFER CONNECT -->
-                        <div class="contact-form-section mt-16">
+                        <div class="contact-form-section mt-10">
                             <div class="flex justify-between items-center mb-1">
                                 <label class="contact-form-label mb-0">Which Offer Connect Me</label>
                                 <Button v-if="props.userRole === 'admin'" icon="pi pi-plus"
@@ -1878,10 +1883,13 @@ const formatHistoryValue = (key: string, value: any) => {
                         <!-- SUBMIT & RESET -->
                         <div class="mt-10 flex flex-col justify-center gap-3 sm:flex-row sm:gap-4">
                             <Button type="button" label="Reset" icon="pi pi-refresh" class="p-button-secondary w-full sm:w-1/4"
+                                :disabled="isSubmitting"
                                 @click="resetForm" />
 
                             <Button type="submit" :label="isEditMode ? 'Update Customer' : 'Save Customer'"
-                                icon="pi pi-check" class="p-button-success w-full sm:w-1/3" />
+                                icon="pi pi-check" class="p-button-success w-full sm:w-1/3"
+                                :loading="isSubmitting"
+                                :disabled="isSubmitting" />
                         </div>
 
                     </form>

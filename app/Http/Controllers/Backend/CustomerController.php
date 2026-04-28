@@ -2,17 +2,17 @@
 
 namespace App\Http\Controllers\Backend;
 
-use App\Models\Customer;
-use App\Models\ServiceType;
-use App\Models\User;
-use Illuminate\Http\Request;
-use App\Services\CustomerService;
 use App\Http\Controllers\Controller;
-use Illuminate\Support\Facades\Auth;
-use App\Models\CustomerAssignHistory;
 use App\Http\Requests\CustomerRequest;
+use App\Models\Customer;
+use App\Models\CustomerAssignHistory;
 use App\Models\CustomerDemoNote;
 use App\Models\CustomerHistory;
+use App\Models\ServiceType;
+use App\Models\User;
+use App\Services\CustomerService;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 
 class CustomerController extends Controller
@@ -26,42 +26,18 @@ class CustomerController extends Controller
 
     public function index()
     {
+        $perPage = request()->input('per_page', 20); // Allow frontend to adjust
+        $perPage = min($perPage, 100); // Cap at 100 to prevent abuse
+
         $query = Customer::with(['numbers', 'assignedStaff', 'demoPresenter'])
             ->select('customers.*');
 
-        $userId = (int)auth()->id();
-        if ($userId) {
-            $query->addSelect(DB::raw("(
-                select count(*) from customer_demo_notes n
-                where n.customer_id = customers.id
-                and n.user_id <> {$userId}
-                and n.id > coalesce(
-                    (select last_read_note_id from customer_demo_note_reads r
-                     where r.customer_id = customers.id and r.user_id = {$userId}
-                     limit 1),
-                    0
-                )
-            ) as demo_notes_unread"));
-
-            $query->addSelect(DB::raw("(
-                select count(*) from customer_histories h
-                where h.customer_id = customers.id
-                and h.note is not null
-                and h.staff_id <> {$userId}
-                and h.id > coalesce(
-                    (select last_read_history_id from customer_history_reads r
-                     where r.customer_id = customers.id and r.user_id = {$userId}
-                     limit 1),
-                    0
-                )
-            ) as customer_notes_unread"));
-        }
-
+        // Apply role-based filtering BEFORE pagination
         if (auth()->user()->role === 'staff') {
             // STAFF → assigned to them OR created by them
             $query->where(function ($q) {
                 $q->where('assigned_staff_id', auth()->id())
-                ->orWhere('created_by', auth()->id());
+                    ->orWhere('created_by', auth()->id());
             });
         }
 
@@ -72,9 +48,92 @@ class CustomerController extends Controller
         }
 
         // ADMIN → all customers (assigned + unassigned)
+        $paginated = $query->latest()->paginate($perPage);
+
+        // Load unread counts efficiently for this page only
+        $customers = $paginated->items();
+        $userId = (int) auth()->id();
+
+        if ($userId && count($customers) > 0) {
+            $this->enrichCustomersWithUnreadCounts($customers, $userId);
+        }
+
         return response()->json([
-            'customers' => $query->latest()->get()
+            'customers' => $customers,
+            'pagination' => [
+                'total' => $paginated->total(),
+                'per_page' => $paginated->perPage(),
+                'current_page' => $paginated->currentPage(),
+                'last_page' => $paginated->lastPage(),
+                'next_page_url' => $paginated->nextPageUrl(),
+                'prev_page_url' => $paginated->previousPageUrl(),
+            ],
         ]);
+    }
+
+    /**
+     * Efficiently load unread counts for a batch of customers
+     * Uses batch queries instead of subqueries per customer (N+1 fix)
+     */
+    private function enrichCustomersWithUnreadCounts($customers, $userId)
+    {
+        $customerIds = collect($customers)->pluck('id')->toArray();
+
+        // Batch query for demo note reads
+        $demoNoteReads = DB::table('customer_demo_note_reads')
+            ->whereIn('customer_id', $customerIds)
+            ->where('user_id', $userId)
+            ->pluck('last_read_note_id', 'customer_id')
+            ->toArray();
+
+        // Batch query for history reads
+        $historyReads = DB::table('customer_history_reads')
+            ->whereIn('customer_id', $customerIds)
+            ->where('user_id', $userId)
+            ->pluck('last_read_history_id', 'customer_id')
+            ->toArray();
+
+        // Count demo notes per customer
+        $demoNoteCounts = DB::table('customer_demo_notes')
+            ->whereIn('customer_id', $customerIds)
+            ->where('user_id', '!=', $userId)
+            ->selectRaw('customer_id, count(*) as count')
+            ->groupBy('customer_id')
+            ->pluck('count', 'customer_id')
+            ->toArray();
+
+        // Count history notes per customer
+        $historyCounts = DB::table('customer_histories')
+            ->whereIn('customer_id', $customerIds)
+            ->where('staff_id', '!=', $userId)
+            ->whereNotNull('note')
+            ->selectRaw('customer_id, count(*) as count')
+            ->groupBy('customer_id')
+            ->pluck('count', 'customer_id')
+            ->toArray();
+
+        // Assign counts to each customer
+        foreach ($customers as $customer) {
+            $lastReadNote = $demoNoteReads[$customer->id] ?? 0;
+            $lastReadHistory = $historyReads[$customer->id] ?? 0;
+
+            $demoCount = ($demoNoteCounts[$customer->id] ?? 0);
+            $historyCount = ($historyCounts[$customer->id] ?? 0);
+
+            // Count only unread (notes after last read)
+            $customer->demo_notes_unread = DB::table('customer_demo_notes')
+                ->where('customer_id', $customer->id)
+                ->where('user_id', '!=', $userId)
+                ->where('id', '>', $lastReadNote)
+                ->count();
+
+            $customer->customer_notes_unread = DB::table('customer_histories')
+                ->where('customer_id', $customer->id)
+                ->where('staff_id', '!=', $userId)
+                ->whereNotNull('note')
+                ->where('id', '>', $lastReadHistory)
+                ->count();
+        }
     }
 
     public function store(CustomerRequest $request)
@@ -83,14 +142,14 @@ class CustomerController extends Controller
 
         return response()->json([
             'message' => 'Customer created successfully',
-            'customer' => $customer
+            'customer' => $customer,
         ], 201);
     }
 
     public function show($id)
     {
         return response()->json([
-            'customer' => $this->service->repo->find($id)
+            'customer' => $this->service->repo->find($id),
         ]);
     }
 
@@ -108,7 +167,7 @@ class CustomerController extends Controller
         foreach ($numbers as $num) {
             $customer->numbers()->create([
                 'number' => $num['number'],
-                'full_number' => $num['full_number'] ?? ($num['country_code'] . $num['number']),
+                'full_number' => $num['full_number'] ?? ($num['country_code'].$num['number']),
                 'type' => $num['type'] ?? 'call',
                 'country_code' => $num['country_code'] ?? null,
             ]);
@@ -116,7 +175,7 @@ class CustomerController extends Controller
 
         return response()->json([
             'message' => 'Customer updated successfully',
-            'customer' => $customer->load('numbers')
+            'customer' => $customer->load('numbers'),
         ]);
     }
 
@@ -124,7 +183,7 @@ class CustomerController extends Controller
     {
         $request->validate([
             'service_type' => 'required|array',
-            'service_type.*' => 'string|max:255'
+            'service_type.*' => 'string|max:255',
         ]);
 
         $customer = $this->service->repo->find($id);
@@ -139,12 +198,12 @@ class CustomerController extends Controller
 
         // ✅ Save JSON to customer
         $customer->update([
-            'service_type' => $request->service_type
+            'service_type' => $request->service_type,
         ]);
 
         return response()->json([
             'message' => 'Service types updated successfully',
-            'customer' => $customer
+            'customer' => $customer,
         ]);
     }
 
@@ -153,7 +212,7 @@ class CustomerController extends Controller
         $this->service->repo->delete($id);
 
         return response()->json([
-            'message' => 'Customer deleted successfully'
+            'message' => 'Customer deleted successfully',
         ]);
     }
 
@@ -165,7 +224,7 @@ class CustomerController extends Controller
             'history' => $customer->staffStatusHistories()
                 ->with('changedBy:id,name')
                 ->latest('changed_at')
-                ->get()
+                ->get(),
         ]);
     }
 
@@ -182,7 +241,7 @@ class CustomerController extends Controller
 
             // Assign staff
             $customer->update([
-                'assigned_staff_id' => $data['staff_id']
+                'assigned_staff_id' => $data['staff_id'],
             ]);
 
             // Log history
@@ -195,7 +254,7 @@ class CustomerController extends Controller
         }
 
         return response()->json([
-            'message' => 'Customer(s) assigned successfully'
+            'message' => 'Customer(s) assigned successfully',
         ]);
     }
 
@@ -222,9 +281,9 @@ class CustomerController extends Controller
         ];
 
         if ($request->staff_status === 'Need To Show Demo') {
-            if (!$request->demo_presenter_id) {
+            if (! $request->demo_presenter_id) {
                 return response()->json([
-                    'message' => 'Demo presenter is required when staff status is Need To Show Demo.'
+                    'message' => 'Demo presenter is required when staff status is Need To Show Demo.',
                 ], 422);
             }
 
@@ -233,9 +292,9 @@ class CustomerController extends Controller
                 ->where('role', 'demo_presenter')
                 ->first();
 
-            if (!$presenter) {
+            if (! $presenter) {
                 return response()->json([
-                    'message' => 'Invalid demo presenter.'
+                    'message' => 'Invalid demo presenter.',
                 ], 422);
             }
 
@@ -260,7 +319,7 @@ class CustomerController extends Controller
 
         return response()->json([
             'message' => 'Staff status updated successfully',
-            'customer' => $customer
+            'customer' => $customer,
         ]);
     }
 
@@ -279,10 +338,10 @@ class CustomerController extends Controller
         ];
 
         $user = auth()->user();
-        if ($user->role === 'staff' && (int)$customer->assigned_staff_id !== (int)$user->id) {
+        if ($user->role === 'staff' && (int) $customer->assigned_staff_id !== (int) $user->id) {
             return response()->json(['message' => 'Forbidden'], 403);
         }
-        if ($user->role === 'demo_presenter' && (int)$customer->demo_presenter_id !== (int)$user->id) {
+        if ($user->role === 'demo_presenter' && (int) $customer->demo_presenter_id !== (int) $user->id) {
             return response()->json(['message' => 'Forbidden'], 403);
         }
 
@@ -292,13 +351,13 @@ class CustomerController extends Controller
             && in_array(($customer->demo_status ?? null), ['Done', 'Cancelled'], true)
         ) {
             return response()->json([
-                'message' => 'Demo status is locked once marked Done or Cancelled.'
+                'message' => 'Demo status is locked once marked Done or Cancelled.',
             ], 422);
         }
 
         if ($customer->staff_status !== 'Need To Show Demo') {
             return response()->json([
-                'message' => 'Demo status can be updated only when staff status is Need To Show Demo.'
+                'message' => 'Demo status can be updated only when staff status is Need To Show Demo.',
             ], 422);
         }
 
@@ -306,7 +365,7 @@ class CustomerController extends Controller
             return response()->json([
                 'message' => $data['demo_status'] === 'Cancelled'
                     ? 'Note is required when marking demo as Cancelled.'
-                    : 'Note is required when marking demo as Done.'
+                    : 'Note is required when marking demo as Done.',
             ], 422);
         }
 
@@ -324,7 +383,7 @@ class CustomerController extends Controller
 
         $updated = $this->service->repo->update($customer->id, $update, auth()->id());
 
-        if (!empty(trim($data['note'] ?? ''))) {
+        if (! empty(trim($data['note'] ?? ''))) {
             CustomerDemoNote::create([
                 'customer_id' => $customer->id,
                 'user_id' => auth()->id(),
@@ -367,7 +426,7 @@ class CustomerController extends Controller
                     // Search by customer number table
                     ->orWhereHas('numbers', function ($q2) use ($q) {
                         $q2->where('number', 'like', "%{$q}%")
-                        ->orWhere('full_number', 'like', "%{$q}%");
+                            ->orWhere('full_number', 'like', "%{$q}%");
                     });
             })
             ->orderBy('id', 'desc')
@@ -376,5 +435,4 @@ class CustomerController extends Controller
 
         return response()->json($customers);
     }
-
 }

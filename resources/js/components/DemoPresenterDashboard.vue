@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from "vue";
+import { ref, computed, onMounted, onBeforeUnmount, watch } from "vue";
 import axios from "axios";
 import Toast from "primevue/toast";
 import { useToast } from "primevue/usetoast";
@@ -79,7 +79,15 @@ const fetchDemoCustomers = async () => {
     }
 };
 
-onMounted(fetchDemoCustomers);
+onMounted(async () => {
+    await fetchDemoCustomers();
+    window.addEventListener('open-demo-note-notification', handleDemoNotificationEvent as EventListener);
+    applyDemoNotificationNavigation();
+});
+
+onBeforeUnmount(() => {
+    window.removeEventListener('open-demo-note-notification', handleDemoNotificationEvent as EventListener);
+});
 
 const hydrateDemoAssignmentMeta = async (list: any[]) => {
     const results = await Promise.allSettled(
@@ -373,6 +381,48 @@ const handleNotesVisibilityChange = (visible: boolean) => {
     }
 };
 
+const openNotesFromPayload = (customerId: number, demoTabKey?: string | null) => {
+    const customer = customers.value.find((item: any) => item.id === customerId);
+    if (!customer) return;
+
+    if (demoTabKey === 'pending') {
+        activeTab.value = 'Pending';
+    } else if (demoTabKey === 'done') {
+        activeTab.value = 'Done';
+    } else if (demoTabKey === 'cancelled') {
+        activeTab.value = 'Cancelled';
+    } else {
+        activeTab.value = customer.demo_status ?? 'All';
+    }
+
+    openNotes(customer);
+};
+
+const handleDemoNotificationEvent = (event: Event) => {
+    const detail = (event as CustomEvent)?.detail ?? {};
+    const customerId = Number(detail.customerId || 0);
+    if (!customerId) return;
+    openNotesFromPayload(customerId, typeof detail.demoTabKey === 'string' ? detail.demoTabKey : null);
+};
+
+const applyDemoNotificationNavigation = () => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('openDemoNotes') !== '1') return;
+
+    const customerId = Number(params.get('demoNoteCustomer') || 0);
+    const demoTabKey = (params.get('demoNoteTab') || '').toLowerCase();
+    if (!customerId) return;
+
+    openNotesFromPayload(customerId, demoTabKey);
+
+    params.delete('openDemoNotes');
+    params.delete('demoNoteCustomer');
+    params.delete('demoNoteTab');
+    const nextQuery = params.toString();
+    const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ''}`;
+    window.history.replaceState({}, '', nextUrl);
+};
+
 watch(
     () => showDetailsDialog.value,
     (v) => {
@@ -382,16 +432,6 @@ watch(
             historyData.value = [];
             assignedForDemoAt.value = null;
             assignedForDemoBy.value = null;
-        }
-    }
-);
-
-watch(
-    () => showNotesDialog.value,
-    (v) => {
-        if (!v) {
-            notesCustomer.value = null;
-            void fetchDemoCustomers();
         }
     }
 );

@@ -133,7 +133,7 @@ Route::middleware(['auth', 'admin'])->group(function () {
 
     Route::get('/task-assignment', function () {
         return Inertia::render('Backend/TaskAssignment');
-    })->name('task.assignment');
+    })->name('task.assignments');
 
     Route::get('/task-list', function () {
         return Inertia::render('Backend/TaskAssignmentList');
@@ -153,7 +153,7 @@ Route::prefix('/api/task-assignments')->group(function () {
     Route::get('/{task_id}/work-history', [TaskAssignmentController::class, 'workHistory']);
 });
 
-Route::post('/employee-login', [EmployeeController::class, 'login'])->name('employee.login');
+// Route::post('/employee-login', [EmployeeController::class, 'login'])->name('employee.login');
 
 
 require __DIR__.'/settings.php';

@@ -3,16 +3,17 @@
 namespace App\Http\Controllers\Backend;
 
 use App\Models\BusinessType;
+use App\Services\CacheService;
 use Illuminate\Http\Request;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
 
 class BusinessTypeController extends Controller
 {
-    // Fetch all business types
+    // Fetch all business types with caching
     public function index(): JsonResponse
     {
-        $types = BusinessType::all();
+        $types = CacheService::getBusinessTypes();
         return response()->json($types);
     }
 
@@ -25,6 +26,7 @@ class BusinessTypeController extends Controller
         ]);
 
         $type = BusinessType::create($request->only(['name', 'status']));
+        CacheService::invalidateBusinessTypes(); // Clear cache
 
         return response()->json($type, 201);
     }
@@ -40,6 +42,7 @@ class BusinessTypeController extends Controller
         ]);
 
         $type->update($request->only(['name', 'status']));
+        CacheService::invalidateBusinessTypes(); // Clear cache
 
         return response()->json($type);
     }
@@ -49,6 +52,7 @@ class BusinessTypeController extends Controller
     {
         $type = BusinessType::findOrFail($id);
         $type->delete();
+        CacheService::invalidateBusinessTypes(); // Clear cache
 
         return response()->json(['message' => 'Business type deleted successfully']);
     }

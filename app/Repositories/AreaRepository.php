@@ -8,8 +8,10 @@ class AreaRepository
 {
     public function all()
     {
-        // admin see all
-        return Area::orderBy('id', 'DESC')->get();
+        // admin see all - select only needed columns
+        return Area::select('id', 'area_name', 'country_name', 'status')
+            ->orderBy('id', 'DESC')
+            ->get();
     }
 
     public function find($id)

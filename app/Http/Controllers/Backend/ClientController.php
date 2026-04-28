@@ -19,8 +19,21 @@ class ClientController extends Controller
 
     public function index(): JsonResponse
     {
-        $clients = $this->service->getAllClients();
-        return response()->json($clients);
+        $perPage = request()->input('per_page', 20);
+        $perPage = min($perPage, 100);
+
+        $paginated = Client::select('id', 'name', 'company_name', 'number', 'operator_name', 'status', 'created_at')
+            ->paginate($perPage);
+
+        return response()->json([
+            'clients' => $paginated->items(),
+            'pagination' => [
+                'total' => $paginated->total(),
+                'per_page' => $paginated->perPage(),
+                'current_page' => $paginated->currentPage(),
+                'last_page' => $paginated->lastPage(),
+            ]
+        ]);
     }
 
     public function store(ClientRequest $request): JsonResponse
@@ -209,7 +222,7 @@ class ClientController extends Controller
             'created_at' => $s->created_at,
         ]);
 
-        $clientCreated = collect([[ 
+        $clientCreated = collect([[
             'id' => 'client-'.$client->id,
             'type' => 'client_created',
             'description' => 'Client was created',
