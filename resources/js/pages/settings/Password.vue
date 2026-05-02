@@ -113,7 +113,8 @@ const strengthText = computed(() => {
                     <!-- Submit -->
                     <div class="flex items-center gap-4">
                         <Button type="submit" :disabled="processing" class="bg-blue-600 hover:bg-blue-700">Save
-                            password</Button>
+                            password
+                        </Button>
                         <p v-if="recentlySuccessful" class="text-sm text-green-600 font-medium">Saved successfully!</p>
                     </div>
                 </Form>

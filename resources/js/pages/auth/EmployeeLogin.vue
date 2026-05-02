@@ -32,9 +32,6 @@ defineProps<{
                     <AppLogoIcon class="h-12" />
                 </div>
 
-                <h1 class="text-2xl font-semibold text-gray-900 text-center">Welcome Back</h1>
-                <p class="text-sm text-gray-500 text-center mt-1">Sign in to your employee account</p>
-
                 <form @submit.prevent="form.post(route('employee.login.store'))" class="mt-8 space-y-5">
                     <div class="space-y-1">
                         <label for="mobile" class="text-sm font-medium text-gray-700">Mobile Number</label>

@@ -807,12 +807,26 @@ const showDemoPresenterFilter = computed(() =>
     (activeTab.value === 'Need To Show Demo' || activeTab.value === 'Demo Pending' || activeTab.value === 'Demo Done' || activeTab.value === 'Cancelled')
 );
 
-watch(activeTab, (tab) => {
-    if (tab !== 'Need To Show Demo' && tab !== 'Demo Pending' && tab !== 'Demo Done' && tab !== 'Cancelled') filterDemoPresenter.value = null;
-    // Default month filter for demo reports
-    if ((tab === 'Demo Done' || tab === 'Cancelled') && !filterCreatedMonth.value) {
-        filterCreatedMonth.value = new Date();
+const tabsWithDefaultCreatedMonth = ['Demo Pending', 'Demo Done', 'Cancelled'] as const;
+const shouldDefaultCreatedMonth = computed(() => tabsWithDefaultCreatedMonth.includes(activeTab.value as any));
+const createdMonthByTab = ref<Record<string, Date | null>>({});
+
+watch(activeTab, (tab, previousTab) => {
+    if (typeof previousTab === 'string') {
+        createdMonthByTab.value[previousTab] = filterCreatedMonth.value;
     }
+
+    if (tab !== 'Need To Show Demo' && tab !== 'Demo Pending' && tab !== 'Demo Done' && tab !== 'Cancelled') {
+        filterDemoPresenter.value = null;
+    }
+
+    const remembered = createdMonthByTab.value[tab] ?? null;
+    if (remembered !== null && remembered !== undefined) {
+        filterCreatedMonth.value = remembered;
+        return;
+    }
+
+    filterCreatedMonth.value = shouldDefaultCreatedMonth.value ? new Date() : null;
 });
 
 const statusTabs = computed(() => {
@@ -993,14 +1007,18 @@ const getFilteredCustomers = (
         });
     }
 
-    // Month filter is used for demo reporting (Demo Done / Demo Cancelled)
-    if (filterCreatedMonth.value && (activeTab.value === "Demo Done" || activeTab.value === "Cancelled")) {
+    // Month filter
+    if (filterCreatedMonth.value) {
         const selectedMonth = new Date(filterCreatedMonth.value);
         list = list.filter(c => {
             const dateStr =
                 activeTab.value === "Demo Done"
                     ? (c.demo_done_at ?? null)
-                    : (c.updated_at ?? null); // Cancelled change time fallback
+                    : activeTab.value === "Demo Pending"
+                        ? (getDemoAssignedAt(c.id) ?? null)
+                        : activeTab.value === "Cancelled"
+                            ? (c.updated_at ?? null) // Cancelled change time fallback
+                            : (c.created_at ?? null);
             if (!dateStr) return false;
             const d = new Date(dateStr);
             return (
@@ -1070,12 +1088,7 @@ const clearFilters = () => {
     filterAssignedUser.value = null;
     filterDemoPresenter.value = null;
 
-    // Default month filter for demo reports
-    if (activeTab.value === "Demo Done" || activeTab.value === "Cancelled") {
-        filterCreatedMonth.value = new Date();
-    } else {
-        filterCreatedMonth.value = null;
-    }
+    filterCreatedMonth.value = shouldDefaultCreatedMonth.value ? new Date() : null;
 };
 
 const formattedUsers = computed(() =>
@@ -1193,6 +1206,17 @@ const formatHistoryValue = (key: string, value: any) => {
         return formatDate(value);
     }
 
+    if (key === 'demo_presenter_id') {
+        const presenterId = Number(value);
+        if (!presenterId) return '-';
+
+        const presenter = demoPresenters.value.find((p: any) => Number(p?.id) === presenterId);
+        if (!presenter) return String(value);
+
+        const presenterNumber = presenter.mobile || presenter.phone || presenter.number || null;
+        return presenterNumber ? `${presenter.name} (${presenterNumber})` : presenter.name;
+    }
+
     // HTML content (like client_behaviour)
     if (typeof value === 'string' && value.includes('<')) {
         return value;
@@ -1223,9 +1247,7 @@ const baseColumns = [
     { key: "shop_type", label: "Shop Type", align: "center" },
     { key: "locations", label: "Locations", align: "center" },
     { key: "lead_source", label: "Lead Source", align: "center" },
-    { key: "interest_level", label: "Interest", align: "center" },
 
-    { key: "feature_need", label: "Feature Need", type: "modal" },
     { key: "our_commitment", label: "Our Commitment", type: "modal" },
     { key: "client_behaviour", label: "Client Behaviour", type: "modal" },
 
@@ -1420,7 +1442,7 @@ const getDemoAssignedAt = (customerId: number) => demoAssignedAtMap.value[custom
                             class="w-full" placeholder="Pick a date" />
                     </div>
 
-                    <div class="flex flex-col w-full md:w-34">
+                    <div v-if="activeTab !== 'Today Customers'" class="flex flex-col w-full md:w-34">
                         <label class="text-sm font-semibold text-gray-600 mb-1">
                             <i class="pi pi-calendar-clock mr-1 text-indigo-500"></i>
                             Created Month
@@ -1595,31 +1617,50 @@ const getDemoAssignedAt = (customerId: number) => demoAssignedAtMap.value[custom
                     </template>
 
                     <template #cell-staff_status="{ row }">
-                        <div class="flex items-center justify-center gap-2"
-                        >
-                            <!-- Sales staff: show status only when assigned to them -->
-                            <template v-if="currentUser?.role === 'staff'">
-                                <span v-if="row.assigned_staff_id === currentUser.id">
-                                    {{ row.staff_status || row.status || 'New' }}
-                                </span>
-                                <span v-else>-</span>
+                        <div class="flex flex-col items-center justify-center gap-1">
+                            <div class="flex items-center justify-center gap-2">
+                                <!-- Sales staff: show status only when assigned to them -->
+                                <template v-if="currentUser?.role === 'staff'">
+                                    <span v-if="row.assigned_staff_id === currentUser.id">
+                                        {{ row.staff_status || row.status || 'New' }}
+                                    </span>
+                                    <span v-else>-</span>
 
-                                <button
-                                    v-if="row.assigned_staff_id === currentUser.id"
-                                    @click="openStaffStatusModal(row)"
-                                    class="text-blue-600 hover:text-blue-800"
-                                    title="Update Staff Status"
-                                >
-                                    <i class="pi pi-pencil"></i>
-                                </button>
-                            </template>
+                                    <button
+                                        v-if="row.assigned_staff_id === currentUser.id"
+                                        @click="openStaffStatusModal(row)"
+                                        class="text-blue-600 hover:text-blue-800"
+                                        title="Update Staff Status"
+                                    >
+                                        <i class="pi pi-pencil"></i>
+                                    </button>
+                                </template>
 
-                            <!-- Admin: always show + can edit -->
-                            <template v-else>
-                                <span>{{ row.staff_status || row.status || 'New' }}</span>
-                                <button @click="openStaffStatusModal(row)" class="text-blue-600 hover:text-blue-800">
-                                    <i class="pi pi-pencil"></i>
-                                </button>
+                                <!-- Admin: always show + can edit -->
+                                <template v-else>
+                                    <span>{{ row.staff_status || row.status || 'New' }}</span>
+                                    <button @click="openStaffStatusModal(row)" class="text-blue-600 hover:text-blue-800">
+                                        <i class="pi pi-pencil"></i>
+                                    </button>
+                                </template>
+                            </div>
+
+                            <template v-if="currentUser?.role !== 'staff' || row.assigned_staff_id === currentUser.id">
+                                <div class="flex flex-wrap items-center justify-center gap-2 text-xs text-gray-700">
+                                    <span class="rounded bg-slate-100 px-2 py-1">
+                                        <span class="font-semibold">Interest:</span>
+                                        {{ row.interest_level || '-' }}
+                                    </span>
+
+                                    <button
+                                        type="button"
+                                        class="rounded bg-indigo-50 px-2 py-1 font-semibold text-indigo-700 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                        :disabled="!row.feature_need"
+                                        @click="openModal('Feature Need', row.feature_need)"
+                                    >
+                                        Feature Need
+                                    </button>
+                                </div>
                             </template>
                         </div>
 

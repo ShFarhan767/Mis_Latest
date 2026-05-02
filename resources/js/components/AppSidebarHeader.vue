@@ -165,7 +165,7 @@ onBeforeUnmount(() => {
 
 <template>
     <header
-        class="sticky top-0 z-30 flex min-h-16 shrink-0 items-center border-b border-slate-200 bg-white px-4 text-slate-900 shadow-none md:px-4 md:bg-white md:text-slate-900 md:shadow-none max-md:border-white/60 max-md:bg-gradient-to-r max-md:from-cyan-500 max-md:via-sky-500 max-md:to-emerald-500 max-md:text-white max-md:shadow-[0_10px_30px_-18px_rgba(14,165,233,0.85)]"
+        class="sticky top-0 z-30 flex min-h-16 shrink-0 items-center text-white border-b border-white/60 bg-gradient-to-r from-cyan-500 via-sky-500 to-emerald-500 px-4 text-white shadow-[0_10px_30px_-18px_rgba(14,165,233,0.85)] md:px-4"
     >
 
         <!-- Left: Sidebar + Breadcrumbs -->
